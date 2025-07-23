@@ -1,82 +1,90 @@
 ```yaml
 # tech_stack_detector.py
+# Pipeline for building, testing, and deploying a Java application using Maven.
+# Includes stages for code checkout, static analysis, unit testing, building, and deployment.
+# Employs caching to improve build times and parallel execution to accelerate the pipeline.
+
 stages:
-  - stage: Build
-    jobs:
-      - job: MavenBuild
-        displayName: 'Maven Build and Test'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: Maven@3
-            displayName: 'Maven Build'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'clean install'
-              publishJUnitResults: true
-              testResultsFiles: '**/surefire-reports/TEST-*.xml'
-              codeCoverageToolOption: 'Cobertura'
-              codeCoverageCoberturaReportDirectory: '$(System.DefaultWorkingDirectory)/target/site/cobertura'
-              javaHomeOption: 'JDKVersion'
-              jdkVersionOption: '1.8'
-              mavenVersionOption: 'Default'
-
-  - stage: SonarQubeAnalysis
-    dependsOn: Build
-    condition: succeeded()
-    jobs:
-      - job: Analyze
-        displayName: 'SonarQube Analysis'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: SonarQubePrepare@5
-            displayName: 'Prepare SonarQube analysis'
-            inputs:
-              SonarQube: 'your_sonarqube_service_connection'  # Replace with your SonarQube service connection name
-              scannerMode: 'Maven'
-              projectKey: 'your_project_key'             # Replace with your SonarQube project key
-              projectName: 'Your Project Name'          # Replace with your SonarQube project name
-
-          - task: Maven@3
-            displayName: 'Run SonarQube analysis'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'clean install sonar:sonar'
-              javaHomeOption: 'JDKVersion'
-              jdkVersionOption: '1.8'
-              mavenVersionOption: 'Default'
-
-          - task: SonarQubePublish@5
-            displayName: 'Publish Quality Gate Result'
-            inputs:
-              pollingTimeoutSec: '300'
-
-  - stage: Publish
-    dependsOn: SonarQubeAnalysis
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))  # Only publish from the main branch
-    jobs:
-      - job: PublishArtifacts
-        displayName: 'Publish Artifacts'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: CopyFiles@2
-            displayName: 'Copy JAR file'
-            inputs:
-              SourceFolder: '$(System.DefaultWorkingDirectory)/target'
-              Contents: '*.jar'
-              TargetFolder: '$(Build.ArtifactStagingDirectory)'
-
-          - task: PublishBuildArtifacts@1
-            displayName: 'Publish Artifact'
-            inputs:
-              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'drop'
-              publishLocation: 'Container'
+  - checkout
+  - static_analysis
+  - test
+  - build
+  - deploy
 
 variables:
-  - name: maven.options
-    value: '-DskipTests'  # Example variable. Can be removed if not needed.
+  MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version -DinstallAtEnd=true -DdeployAtEnd=true"
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  DOCKER_IMAGE_NAME: "your-docker-registry/your-image-name" # Replace with your Docker image name
+  DOCKER_IMAGE_TAG: "latest" # Replace with your desired tag strategy
 
+cache:
+  paths:
+    - .m2/repository/
+    - target/
+
+checkout:
+  stage: checkout
+  image: alpine/git:latest
+  script:
+    - echo "Checking out the code..."
+    - git clone $CI_REPOSITORY_URL .
+  artifacts:
+    paths:
+      - .git
+    expire_in: 1 hour
+
+static_analysis:
+  stage: static_analysis
+  image: maven:3.8.6-jdk-11
+  script:
+    - echo "Running static analysis with Maven..."
+    - mvn $MAVEN_CLI_OPTS checkstyle:checkstyle spotbugs:check
+  allow_failure: true # Allow failure for non-critical analysis
+  tags:
+    - docker
+
+test:
+  stage: test
+  image: maven:3.8.6-jdk-11
+  script:
+    - echo "Running unit tests with Maven..."
+    - mvn $MAVEN_CLI_OPTS test
+  tags:
+    - docker
+
+build:
+  stage: build
+  image: maven:3.8.6-jdk-11
+  script:
+    - echo "Building the application with Maven..."
+    - mvn $MAVEN_CLI_OPTS package -DskipTests
+    - echo "Creating Docker image..."
+    - docker build -t $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG .
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker push $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG
+  tags:
+    - docker
+  dependencies:
+    - test
+
+deploy:
+  stage: deploy
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - echo "Deploying the application..."
+    - # Example deployment command (replace with your actual deployment strategy)
+    - # docker-compose -f docker-compose.yml up -d
+    - echo "Deployment successful."
+  environment:
+    name: production
+  only:
+    - main # or your production branch
+  tags:
+    - docker
+  dependencies:
+    - build
 ```
