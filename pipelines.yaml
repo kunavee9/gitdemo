@@ -1,85 +1,68 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for building, testing, and deploying a Java application using Maven.
-# Includes stages for checkout, build, test, code analysis, and deployment.
-# Leverages Maven for dependency management and build automation.
-# Uses SonarQube for static code analysis.
-# Deploys to a specified environment (e.g., staging, production).
+# Pipeline configuration for Java (Maven) project.
 
 stages:
-  - Checkout
-  - Build
-  - Test
-  - SonarQube Analysis
-  - Deploy
+  - name: Build
+    steps:
+      - step:
+          name: Checkout Source Code
+          type: git-checkout
+          repo: self
+          # Branch name to check out.  Defaults to the default branch configured in the repo.
+          # branch: main
 
-Checkout:
-  stage: Checkout
-  image: alpine/git:latest
-  script:
-    - echo "Checking out the code..."
-    - git clone $CI_REPOSITORY_URL .
-  artifacts:
-    paths:
-      - .
+      - step:
+          name: Build and Test
+          image: maven:3.8.6-jdk-11
+          commands:
+            - echo "Starting Maven build and test..."
+            - mvn clean install -DskipTests=false #Include tests
+            - echo "Maven build and test completed."
+          artifacts:
+            - target/*.jar  # Adjust pattern as needed for your project.
+    
+  - name: Code Analysis
+    steps:
+      - step:
+          name: SonarQube Analysis
+          image: maven:3.8.6-jdk-11
+          script:
+            - echo "Starting SonarQube analysis..."
+            - mvn sonar:sonar -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN  # Use variables for sensitive data
+            - echo "SonarQube analysis completed."
+          when: success
+          
+  - name: Package and Publish
+    steps:
+      - step:
+          name: Package Artifact
+          image: maven:3.8.6-jdk-11
+          commands:
+            - echo "Packaging application..."
+            - mkdir -p dist
+            - cp target/*.jar dist/app.jar  # Customize artifact name and path.
+            - echo "Application packaged."
+          artifacts:
+            - dist/*
+    
+      - step:
+          name: Publish to Repository (Example: Docker)
+          image: docker:latest
+          script:
+            - echo "Publishing Docker image (example)..."
+            - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+            - docker build -t $DOCKER_IMAGE_NAME:latest .  # Requires a Dockerfile
+            - docker push $DOCKER_IMAGE_NAME:latest
+            - echo "Docker image published."
+          when: success
+          variables:
+            DOCKER_IMAGE_NAME: your-docker-repo/your-image-name #Replace
+          services:
+            - docker  # Enable Docker-in-Docker, if needed.
+          after_script:
+            - docker logout #Best practice to logout
 
-Build:
-  stage: Build
-  image: maven:3.8.6-jdk-11
-  script:
-    - echo "Building the application with Maven..."
-    - mvn clean install -DskipTests
-  artifacts:
-    paths:
-      - target/*.jar
-
-Test:
-  stage: Test
-  image: maven:3.8.6-jdk-11
-  script:
-    - echo "Running unit tests with Maven..."
-    - mvn test
-  dependencies:
-    - Build
-  artifacts:
-    reports:
-      junit: target/surefire-reports/TEST-*.xml
-
-SonarQube Analysis:
-  stage: SonarQube Analysis
-  image: maven:3.8.6-jdk-11
-  variables:
-    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the SonarScanner cache
-    GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required for SonarQube analysis
-  script:
-    - echo "Running SonarQube analysis..."
-    - mvn sonar:sonar -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN
-  dependencies:
-    - Build
-    - Test
-  allow_failure: true
-
-Deploy:
-  stage: Deploy
-  image: alpine/k8s:1.24.2
-  variables:
-    KUBE_NAMESPACE: "default"
-  script:
-    - echo "Deploying the application..."
-    - echo "Deploying to environment: $ENVIRONMENT"
-    - kubectl apply -f deployment.yaml -n $KUBE_NAMESPACE
-    - kubectl apply -f service.yaml -n $KUBE_NAMESPACE
-  dependencies:
-    - Build
-  environment:
-    name: $ENVIRONMENT
-    url: $DEPLOYMENT_URL
-  only:
-    - main # or specify a branch like 'release'
-
-variables:
-  MAVEN_CLI_OPTS: "-s .m2/settings.xml --batch-mode --errors --fail-at-end --show-version"
-  # Define environments
-  ENVIRONMENT: "staging" # default environment if not specified
-  DEPLOYMENT_URL: "http://example.com" # replace with your deployment URL
+options:
+  docker: true
 ```
