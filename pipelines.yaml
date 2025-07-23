@@ -1,8 +1,5 @@
 ```yaml
 # tech_stack_detector.py
-# CI/CD pipeline for a React application.
-# Uses Node.js for building and testing, and deploys to a static hosting provider (e.g., AWS S3, Netlify).
-
 name: React CI/CD Pipeline
 
 on:
@@ -21,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 18 # or your preferred Node.js version
+          node-version: '16'  # Or your preferred Node.js version
 
       - name: Install dependencies
         run: npm install
@@ -29,18 +26,48 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build
+      - name: Build production bundle
         run: npm run build
 
-      - name: Deploy to Production
-        if: github.ref == 'refs/heads/main'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: 'us-east-1' # Replace with your AWS region
-          S3_BUCKET: 'your-s3-bucket-name' # Replace with your S3 bucket name
-        run: |
-          npm install -g aws-cli
-          aws s3 sync ./build s3://$S3_BUCKET --delete # Ensure to delete old files to prevent caching issues.
+      - name: Upload artifact to storage
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: react-build
+          path: build
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: Production
+      url: ${{ steps.deploy-to-server.outputs.webapp-url }}
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: react-build
+          path: build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy to S3 bucket
+        run: |
+          aws s3 sync build s3://your-s3-bucket-name --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation --distribution-id your-cloudfront-distribution-id --paths "/*"
+
+      - name: Deploy to server
+        id: deploy-to-server
+        run: |
+          echo "Deploying to server..."
+          echo "webapp-url=https://example.com" >> $GITHUB_OUTPUT
 ```
