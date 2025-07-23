@@ -1,68 +1,102 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for Java (Maven) projects
+# Pipeline for building, testing, and deploying a Java application using Maven.
+# Includes stages for static analysis, unit testing, integration testing, and deployment.
+# Uses industry best practices for security and code quality.
 
 stages:
-  - name: Build
+  - name: "Build"
     steps:
-      - step:
-          name: Checkout
-          type: git-checkout
-          repo: self
-      - step:
-          name: Set up JDK
-          image: maven:3.8.6-openjdk-17
-          script:
-            - echo "Setting up JDK 17"
-            - java -version
-      - step:
-          name: Maven Build
-          image: maven:3.8.6-openjdk-17
-          caches:
-            - maven
-          script:
-            - echo "Starting Maven build"
-            - mvn clean install -DskipTests # Consider removing skipTests for actual testing
-  - name: Test
-    steps:
-      - step:
-          name: Run Tests
-          image: maven:3.8.6-openjdk-17
-          caches:
-            - maven
-          script:
-            - echo "Running unit tests"
-            - mvn test # Execute tests.  May need configuration in pom.xml
-          artifacts:
-            - target/surefire-reports/* # Saves test results (if applicable)
+      - run: |
+          echo "Building the application..."
+          mvn clean install -DskipTests
+        name: "Maven Build"
+        image: maven:3.8.6-jdk-11
 
-  - name: Package
+  - name: "Static Analysis"
     steps:
-      - step:
-          name: Package Application
-          image: maven:3.8.6-openjdk-17
-          caches:
-            - maven
-          script:
-            - echo "Packaging application"
-            - mvn package # Package the application. May need plugin configuration in pom.xml
-          artifacts:
-            - target/*.jar # Saves the packaged jar/war
+      - run: |
+          echo "Running static analysis with SonarQube..."
+          mvn sonar:sonar \
+            -Dsonar.host.url=$SONARQUBE_URL \
+            -Dsonar.login=$SONARQUBE_TOKEN
+        name: "SonarQube Analysis"
+        image: maven:3.8.6-jdk-11
+        environment:
+          SONARQUBE_URL:  # Define in project or org settings.  e.g., http://sonarqube.example.com
+          SONARQUBE_TOKEN: # Define in project or org settings.  e.g., sqp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+        failure: continue  # Allow pipeline to continue even if SonarQube analysis fails. Critical security issues can still fail the pipeline via quality gate.
 
-  - name: Deploy
+  - name: "Unit Tests"
     steps:
-      - step:
-          name: Deploy to Staging (Example)
-          image: alpine/ssh
-          script:
-            - echo "Deploying to staging environment (Example)"
-            - echo "Replace this with your actual deployment script"
-            # Example: scp target/*.jar user@staging:/path/to/deploy/
-            # Example: ssh user@staging "service myapp restart"
-          # Add conditionals or triggers here for specific deployment scenarios
+      - run: |
+          echo "Running unit tests..."
+          mvn test
+        name: "Maven Unit Tests"
+        image: maven:3.8.6-jdk-11
+        failure: fail
 
-caches:
-  maven:
-    paths:
-      - /root/.m2/repository
+  - name: "Integration Tests"
+    steps:
+      - run: |
+          echo "Running integration tests..."
+          # Placeholder for integration test execution.  Adapt as needed.
+          mvn verify -P integration-test
+        name: "Maven Integration Tests"
+        image: maven:3.8.6-jdk-11
+        failure: fail
+        # Add environment variables and service dependencies for integration tests as needed
+        # e.g.,
+        # environment:
+        #   DATABASE_URL: "jdbc:postgresql://db:5432/mydb"
+        # services:
+        #   - name: db
+        #     image: postgres:13
+        #     ports:
+        #       - "5432:5432"
+        #     environment:
+        #       POSTGRES_USER: "myuser"
+        #       POSTGRES_PASSWORD: "mypassword"
+        #       POSTGRES_DB: "mydb"
+
+  - name: "Package"
+    steps:
+      - run: |
+          echo "Packaging the application..."
+          mvn package
+        name: "Maven Package"
+        image: maven:3.8.6-jdk-11
+
+      - run: |
+          echo "Dockerizing the application..."
+          docker build -t $DOCKER_IMAGE_NAME .
+          docker push $DOCKER_IMAGE_NAME
+        name: "Docker Build and Push"
+        image: docker:20.10.12
+        environment:
+          DOCKER_IMAGE_NAME: # Define in project or org settings.  e.g., your-docker-hub-username/your-app-name:latest
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock # Needs Docker-in-Docker setup or a remote Docker daemon
+
+  - name: "Deploy"
+    steps:
+      - run: |
+          echo "Deploying the application..."
+          # Replace with your deployment script or tool (e.g., kubectl, helm, docker-compose)
+          # Example using kubectl:
+          # kubectl apply -f deployment.yaml
+          echo "Deployment placeholder - replace with actual deployment steps"
+        name: "Deploy to Environment"
+        image: alpine/kubectl:1.23.4 # example image with kubectl
+        environment:
+          KUBE_CONFIG: # Define in project or org settings or fetch from secret store.  e.g., base64 encoded kubeconfig
+        # Add environment variables for deployment environment as needed.
+        # Add necessary volumes to interact with your cluster e.g. mounted kubeconfig
+        # volumes:
+        #  - name: kubeconfig
+        #    mountPath: /root/.kube/config
+        #    secret: kubeconfig-secret
+    when:
+      branch: main # Only deploy from the main branch (or your desired production branch).  Consider adding tags as well.
+
 ```
