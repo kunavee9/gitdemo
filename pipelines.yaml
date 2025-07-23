@@ -1,46 +1,75 @@
 ```yaml
 # tech_stack_detector.py
-name: React CI/CD Pipeline
+# Pipeline configuration for a React application.
+# This pipeline includes linting, building, testing, and deployment stages.
 
-on:
-  push:
-    branches:
-      - main
+stages:
+  - Lint
+  - Build
+  - Test
+  - Deploy
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+Lint:
+  stage: Lint
+  image: node:latest
+  script:
+    - echo "Running linter..."
+    - npm install --silent
+    - npm run lint
+  tags:
+    - docker
 
-    strategy:
-      matrix:
-        node-version: [16.x]
+Build:
+  stage: Build
+  image: node:latest
+  script:
+    - echo "Building the application..."
+    - npm install --silent
+    - npm run build
+  artifacts:
+    paths:
+      - build/
+  tags:
+    - docker
+  dependencies:
+    - Lint
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+Test:
+  stage: Test
+  image: node:latest
+  script:
+    - echo "Running tests..."
+    - npm install --silent
+    - npm run test -- --coverage
+  artifacts:
+    paths:
+      - coverage/
+  coverage: '/All files[^|]*\\|[^\\d]*([\\d\\.]+)\\%/'
+  tags:
+    - docker
+  dependencies:
+    - Build
 
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v3
-        with:
-          node-version: ${{ matrix.node-version }}
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run tests
-        run: npm run test
-
-      - name: Build production build
-        run: npm run build
-        env:
-          CI: false # Fix issues with CI build related to colors/interactive prompts
-
-      - name: Deploy to Firebase Hosting
-        if: github.ref == 'refs/heads/main' # Only deploy from main branch
-        uses: w9jds/firebase-action@releases/v6
-        with:
-          args: deploy --only hosting
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
-          PROJECT_ID: ${{ secrets.PROJECT_ID }}
+Deploy:
+  stage: Deploy
+  image: alpine/git
+  before_script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 400 ~/.ssh/id_rsa
+    - ssh-keyscan $DEPLOY_SERVER >> ~/.ssh/known_hosts
+    - chmod 400 ~/.ssh/known_hosts
+  script:
+    - echo "Deploying the application..."
+    - rsync -avz --delete build/ $DEPLOY_USER@$DEPLOY_SERVER:$DEPLOY_PATH
+  environment:
+    name: production
+    url: $DEPLOY_URL
+  only:
+    - main
+  tags:
+    - docker
+  dependencies:
+    - Test
 ```
