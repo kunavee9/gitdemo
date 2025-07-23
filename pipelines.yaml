@@ -1,27 +1,33 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for Java (Maven) projects
+# Pipeline configuration for Java (Maven) project
+
 stages:
   - name: Build
     steps:
       - step:
-          name: Checkout
+          name: Checkout Code
           type: git-checkout
-          repo: ${{repo.FullName}}
-          revision: ${{revision}}
+          repo: self
+          fail_on_error: true
 
       - step:
           name: Set up JDK
           image: maven:3.8.6-openjdk-17
           commands:
-            - echo "Installing JDK 17"
+            - java -version
+            - mvn -version
+          fail_on_error: true
 
       - step:
           name: Maven Build
           image: maven:3.8.6-openjdk-17
           commands:
-            - echo "Starting Maven build"
-            - mvn clean install -DskipTests # Build the project
+            - mvn clean install -DskipTests
+          fail_on_error: true
+
+          artifacts:
+            - target/*.jar # Adjust based on your project's output
 
   - name: Test
     steps:
@@ -29,31 +35,44 @@ stages:
           name: Run Tests
           image: maven:3.8.6-openjdk-17
           commands:
-            - echo "Running tests"
-            - mvn test # Execute the tests
-          when:
-            status: success # Only run if the Build stage was successful
+            - mvn test
+          fail_on_error: true
 
-  - name: Package
+  - name: SonarQube Analysis
     steps:
       - step:
-          name: Package Artifact
+          name: SonarQube Scan
           image: maven:3.8.6-openjdk-17
-          commands:
-            - echo "Packaging artifact"
-            - mvn package # Package the application
-          when:
-            status: success # Only run if the Test stage was successful
+          script:
+            - mvn sonar:sonar -Dsonar.host.url=$SONARQUBE_HOST_URL -Dsonar.login=$SONARQUBE_TOKEN
+          fail_on_error: true
+          condition: ${BITBUCKET_BRANCH} == 'main' # Or your main branch name
+          variables:
+            SONARQUBE_HOST_URL: ${SONARQUBE_HOST_URL} #Replace with your SonarQube URL
+            SONARQUBE_TOKEN: ${SONARQUBE_TOKEN}   # Replace with your SonarQube token
 
   - name: Deploy
     steps:
       - step:
-          name: Deploy to Repository
-          image: maven:3.8.6-openjdk-17
-          commands:
-            - echo "Deploying artifact"
-            # Add deployment commands here (e.g., deploy to Maven Central, deploy to a custom repository)
-            - echo "Deployment commands go here" #Placeholder
-          when:
-            status: success # Only run if the Package stage was successful
+          name: Deploy to Staging
+          image: alpine/curl
+          script:
+            - echo "Deploying to staging environment..."
+            - curl -X POST -H "Content-Type: application/json" -d '{"deployment_env": "staging"}' $DEPLOYMENT_ENDPOINT
+          condition: ${BITBUCKET_BRANCH} == 'staging' # deploy when branch name matches staging
+
+      - step:
+          name: Deploy to Production
+          image: alpine/curl
+          script:
+            - echo "Deploying to production environment..."
+            - curl -X POST -H "Content-Type: application/json" -d '{"deployment_env": "production"}' $DEPLOYMENT_ENDPOINT
+          condition: ${BITBUCKET_TAG} # deploy when tag has been created
+          trigger: manual
+          variables:
+            DEPLOYMENT_ENDPOINT: ${DEPLOYMENT_ENDPOINT} # Your deployment endpoint
+
+definitions:
+  caches:
+    maven: ~/.m2/repository
 ```
