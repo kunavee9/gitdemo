@@ -1,44 +1,53 @@
 ```yaml
 # tech_stack_detector.py
+# Pipeline for Java (Maven) projects
+# Includes build, test, and artifact deployment stages.
+
 stages:
   - name: Build
     steps:
       - step:
-          name: Build and Test
-          image: maven:3.8.6-openjdk-17 # Using a specific Maven and JDK version for consistency
-          caches:
-            - maven # Caching Maven dependencies
-          script:
-            - echo "Building and testing the Java application..."
-            - mvn clean install # Clean, compile, test, and package the application
-          artifacts:
-            - target/* # Store the built JAR/WAR file as an artifact
-
-  - name: SonarQube Analysis
-    steps:
-      - step:
-          name: SonarQube Analysis
-          image: maven:3.8.6-openjdk-17 # Consistent environment
+          name: Build and Analyze
+          image: maven:3.8.5-openjdk-17 # Using a specific maven image for consistency
           caches:
             - maven
           script:
-            - echo "Running SonarQube analysis..."
-            - mvn sonar:sonar -Dsonar.host.url=$SONARQUBE_URL -Dsonar.login=$SONARQUBE_TOKEN # Passing SonarQube URL and token as environment variables
-          after_script:
-            - echo "SonarQube analysis completed."
-
-  - name: Docker Build and Push
+            - echo "Starting build process..."
+            - mvn clean install -DskipTests  # Build the project, skipping tests initially
+            - echo "Build completed."
+  - name: Test
     steps:
       - step:
-          name: Build Docker Image
-          image: docker:20.10.12 # Using a specific Docker version for build reproducibility
-          services:
-            - docker # Enabling Docker-in-Docker service
+          name: Unit Tests
+          image: maven:3.8.5-openjdk-17
+          caches:
+            - maven
           script:
-            - echo "Building Docker image..."
-            - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD # Docker login with username and password from environment variables
-            - docker build -t $DOCKER_IMAGE_NAME . # Building the Docker image
-            - docker push $DOCKER_IMAGE_NAME # Pushing the Docker image to the registry
-          after_script:
-            - echo "Docker image built and pushed."
+            - echo "Running unit tests..."
+            - mvn test # Run unit tests
+            - echo "Unit tests completed."
+  - name: Package
+    steps:
+      - step:
+          name: Package Artifact
+          image: maven:3.8.5-openjdk-17
+          caches:
+            - maven
+          script:
+            - echo "Packaging artifact..."
+            - mvn package # Package the application
+            - echo "Artifact packaged."
+          artifacts:
+            - target/*.jar  # Specify the artifact to be saved
+
+  - name: Deploy
+    steps:
+      - step:
+          name: Deploy to Repository
+          image: alpine/git # Using git image for deployment (example)
+          script:
+            - echo "Deploying artifact..."
+            # Replace with your actual deployment script
+            # Example: scp target/*.jar user@host:/path/to/deploy/
+            - echo "Artifact deployed (Placeholder - Implement actual deployment)"
 ```
