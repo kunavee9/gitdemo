@@ -1,85 +1,53 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for Java (Maven) projects.
-# This pipeline includes stages for building, testing, and deploying a Java application using Maven.
+# Pipeline definition for a Java (Maven) project.
+# This pipeline builds, tests, and deploys a Java application using Maven.
 
 stages:
   - name: Build
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v3
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - name: Maven Build
-        run: mvn clean install -DskipTests=true # Build the project, skipping tests for now
+      - step:
+          name: Build and Test
+          image: maven:3.8.6-jdk-11
+          caches:
+            - maven  # Cache Maven dependencies
+          script:
+            - echo "Building the application..."
+            - mvn clean install  # Clean and build the project
+          artifacts:
+            - target/*.jar  # Archive the JAR file
 
-  - name: Test
-    needs: Build
+  - name: SonarQube Analysis
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v3
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - name: Maven Test
-        run: mvn test # Run the tests
-
-  - name: Code Analysis
-    needs: Test
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v3
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - name: Run SonarQube Analysis
-        uses: sonarsource/sonarqube-scan-action@master
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      - name: SonarQube Quality Gate check
-        uses: sonarsource/sonarqube-quality-gate-action@master
-        timeout-minutes: 5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
-  - name: Package
-    needs: Code Analysis
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v3
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - name: Maven Package
-        run: mvn package # Package the application (e.g., create a JAR or WAR file)
+      - step:
+          name: SonarQube Scan
+          image: sonarsource/sonar-scanner-cli:latest
+          script:
+            - echo "Running SonarQube analysis..."
+            - sonar-scanner -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.sources=. -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN  # Perform SonarQube analysis
+          services:  #Removed due to Bitbucket Pipelines not supporting dependent services
+            - docker:dind
 
   - name: Deploy
-    needs: Package
     steps:
-      - name: Deploy to Production
-        run: echo "Deploying to Production..." # Placeholder for actual deployment logic.  Replace with your deployment steps (e.g., using SSH, Docker, or a cloud provider CLI).
-        # Add deployment steps here (e.g., using SSH, Docker, or a cloud provider CLI)
-        # Example using SSH:
-        # - name: Deploy via SSH
-        #   uses: appleboy/ssh-action@master
-        #   with:
-        #     host: ${{ secrets.DEPLOY_HOST }}
-        #     username: ${{ secrets.DEPLOY_USER }}
-        #     key: ${{ secrets.DEPLOY_KEY }}
-        #     script: |
-        #       cd /var/www/my-app
-        #       git pull origin main
-        #       mvn clean install
-        #       ./restart-app.sh
+      - step:
+          name: Deploy to Staging
+          image: alpine/git # Can be replaced with more suitable deployment images.
+          script:
+            - echo "Deploying to Staging..."
+            - echo "Deployment logic goes here, e.g., using SSH, SCP, or a deployment script"
+            - mkdir -p /opt/staging
+            - cp target/*.jar /opt/staging  # Placeholder for actual deployment
 
+  - name: Release
+    trigger: manual # Trigger the release stage manually
+    steps:
+      - step:
+          name: Release to Production
+          image: alpine/git # Can be replaced with more suitable deployment images.
+          script:
+            - echo "Releasing to Production..."
+            - echo "Production deployment logic goes here."
+            - mkdir -p /opt/production
+            - cp target/*.jar /opt/production  # Placeholder for actual deployment
 ```
