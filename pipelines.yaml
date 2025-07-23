@@ -6,39 +6,83 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
 
 jobs:
-  build:
+  setup:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18' # Use a supported Node.js version
+          node-version: '16' # Use a LTS version
+          cache: 'npm'  # Enable npm caching
 
-      - name: Install Dependencies
-        run: npm install # Or yarn install, pnpm install
+  lint:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
 
       - name: Run ESLint
-        run: npm run lint # Or yarn lint, pnpm lint
+        run: npm run lint
 
-      - name: Run Prettier
-        run: npm run format:check # Or yarn format:check, pnpm format:check
+  test:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: Run Tests
-        run: npm run test # Or yarn test, pnpm test
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+          cache: 'npm'
 
-      - name: Build Project
-        run: npm run build # Or yarn build, pnpm build
+      - name: Install dependencies
+        run: npm install
 
-      - name: Upload Artifacts
+      - name: Run tests
+        run: npm run test:ci # Assuming you have a test:ci script defined
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }} # Optional: Replace with your Codecov token
+
+  build:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
           name: build
@@ -47,27 +91,17 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' # Only deploy from main branch
-
     steps:
-      - name: Download Build Artifacts
+      - name: Download build artifacts
         uses: actions/download-artifact@v3
         with:
           name: build
           path: build
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Deploy to Firebase Hosting
+        uses: w9jds/firebase-action@releases/v6
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Deploy to S3 Bucket
-        run: |
-          aws s3 sync build s3://${{ secrets.AWS_S3_BUCKET }} --delete
-
-      - name: Invalidate CloudFront Cache
-        run: |
-          aws cloudfront create-invalidation --distribution-id ${{ secrets.AWS_CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"
+          args: deploy --only hosting
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }} # Store Firebase token in secrets
 ```
