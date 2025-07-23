@@ -6,6 +6,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build:
@@ -18,56 +21,40 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '16'  # Or your preferred Node.js version
+          node-version: 18  # Or your preferred Node.js version
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install Dependencies
+        run: npm install # Or yarn install if using Yarn
 
-      - name: Run tests
-        run: npm test
+      - name: Run Tests
+        run: npm test # Or yarn test
 
-      - name: Build production bundle
-        run: npm run build
+      - name: Build Production
+        run: npm run build # Or yarn build.  Assumes "build" script creates a production-ready artifact
 
-      - name: Upload artifact to storage
-        if: always()
+      - name: Upload Artifact
         uses: actions/upload-artifact@v3
         with:
-          name: react-build
-          path: build
+          name: react-app
+          path: build # Or your build output directory
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: Production
-      url: ${{ steps.deploy-to-server.outputs.webapp-url }}
+    if: github.ref == 'refs/heads/main' # Only deploy from main branch
 
     steps:
-      - name: Download artifact
+      - name: Download Artifact
         uses: actions/download-artifact@v3
         with:
-          name: react-build
+          name: react-app
           path: build
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Deploy to S3 bucket
+      - name: Deploy to Production # Replace with your deployment strategy
         run: |
-          aws s3 sync build s3://your-s3-bucket-name --delete
-
-      - name: Invalidate CloudFront cache
-        run: |
-          aws cloudfront create-invalidation --distribution-id your-cloudfront-distribution-id --paths "/*"
-
-      - name: Deploy to server
-        id: deploy-to-server
-        run: |
-          echo "Deploying to server..."
-          echo "webapp-url=https://example.com" >> $GITHUB_OUTPUT
+          echo "Deploying to production..."
+          # Add your deployment commands here
+          # Example:
+          # scp -r build/* user@yourserver.com:/var/www/your-app
+          echo "Deployment complete."
 ```
