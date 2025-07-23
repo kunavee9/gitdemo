@@ -6,102 +6,62 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
-  setup:
+  setup_and_test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '16' # Use a LTS version
-          cache: 'npm'  # Enable npm caching
-
-  lint:
-    needs: setup
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '16'
-          cache: 'npm'
+          node-version: '18' # Use a specific Node.js version
 
       - name: Install dependencies
-        run: npm install
+        run: npm install # Or yarn install
 
-      - name: Run ESLint
-        run: npm run lint
-
-  test:
-    needs: setup
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '16'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install
+      - name: Run linters
+        run: npm run lint # Or yarn lint
 
       - name: Run tests
-        run: npm run test:ci # Assuming you have a test:ci script defined
+        run: npm run test # Or yarn test
 
-      - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }} # Optional: Replace with your Codecov token
-
-  build:
-    needs: [lint, test]
+  build_and_deploy:
+    needs: setup_and_test # Only run after tests pass
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '16'
-          cache: 'npm'
+          node-version: '18'
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build
-        run: npm run build
+      - name: Build the application
+        run: npm run build # Or yarn build
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: build
-          path: build
+      - name: Deploy to Production
+        if: github.ref == 'refs/heads/main' # Only deploy from main branch
+        run: |
+          echo "Deploying to production..."
+          # Replace with your deployment script
+          # Example:
+          # rsync -avz ./build/ user@your-server:/path/to/your/app
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: build
-          path: build
-
-      - name: Deploy to Firebase Hosting
-        uses: w9jds/firebase-action@releases/v6
-        with:
-          args: deploy --only hosting
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }} # Store Firebase token in secrets
+      - name: Deploy to Staging
+        if: github.ref == 'refs/heads/develop'
+        run: |
+          echo "Deploying to staging..."
+          # Replace with your deployment script
+          # Example:
+          # rsync -avz ./build/ user@your-staging-server:/path/to/your/app
 ```
