@@ -1,68 +1,62 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline configuration for Java (Maven) project.
-
 stages:
   - name: Build
     steps:
       - step:
-          name: Checkout Source Code
-          type: git-checkout
-          repo: self
-          # Branch name to check out.  Defaults to the default branch configured in the repo.
-          # branch: main
-
-      - step:
           name: Build and Test
-          image: maven:3.8.6-jdk-11
+          image: maven:3.8.5-openjdk-17
           commands:
             - echo "Starting Maven build and test..."
-            - mvn clean install -DskipTests=false #Include tests
+            - mvn clean install # Clean and build the project
             - echo "Maven build and test completed."
           artifacts:
-            - target/*.jar  # Adjust pattern as needed for your project.
-    
-  - name: Code Analysis
+            - target/* # Store built artifacts, e.g., JAR file.
+
+  - name: SonarQube Analysis
     steps:
       - step:
-          name: SonarQube Analysis
-          image: maven:3.8.6-jdk-11
+          name: SonarQube Scan
+          image: sonarsource/sonar-scanner-cli:latest
           script:
             - echo "Starting SonarQube analysis..."
-            - mvn sonar:sonar -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN  # Use variables for sensitive data
+            - sonar-scanner # Execute SonarQube scanner
             - echo "SonarQube analysis completed."
-          when: success
-          
-  - name: Package and Publish
+          environment:
+            SONAR_HOST_URL: ${SONAR_HOST_URL} #  e.g., http://your-sonar-host
+            SONAR_TOKEN: ${SONAR_TOKEN}       # SonarQube token with permissions to analyze project
+            SONAR_PROJECT_KEY: ${SONAR_PROJECT_KEY} # Unique identifier of the project in SonarQube
+          # Add the following lines if you use a properties file:
+          #    - sonar.projectKey=$SONAR_PROJECT_KEY
+          #    - sonar.host.url=$SONAR_HOST_URL
+          #    - sonar.login=$SONAR_TOKEN
+          #  If your SonarQube configuration requires additional properties:
+          #    - sonar.java.binaries=target/classes
+          #    - sonar.sources=src
+
+  - name: Deploy
     steps:
       - step:
-          name: Package Artifact
-          image: maven:3.8.6-jdk-11
-          commands:
-            - echo "Packaging application..."
-            - mkdir -p dist
-            - cp target/*.jar dist/app.jar  # Customize artifact name and path.
-            - echo "Application packaged."
-          artifacts:
-            - dist/*
-    
-      - step:
-          name: Publish to Repository (Example: Docker)
-          image: docker:latest
+          name: Deploy to Staging
+          image: alpine/git # Using a lightweight image for deployment operations
           script:
-            - echo "Publishing Docker image (example)..."
-            - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
-            - docker build -t $DOCKER_IMAGE_NAME:latest .  # Requires a Dockerfile
-            - docker push $DOCKER_IMAGE_NAME:latest
-            - echo "Docker image published."
-          when: success
-          variables:
-            DOCKER_IMAGE_NAME: your-docker-repo/your-image-name #Replace
-          services:
-            - docker  # Enable Docker-in-Docker, if needed.
-          after_script:
-            - docker logout #Best practice to logout
+            - echo "Deploying to staging environment..."
+            - # Add deployment commands here, e.g., using SSH, SCP, or a deployment tool
+            - echo "Deployment to staging completed."
+          deployment: staging # Mark as a staging deployment
+          trigger: automatic # Automatically trigger this stage if the previous one succeeds
 
-options:
-  docker: true
+  - name: Release
+    steps:
+      - step:
+          name: Promote to Production
+          image: alpine/git
+          script:
+            - echo "Promoting to production environment..."
+            - # Add promotion commands here.  This might involve tagging a release,
+            - # updating a database, or switching load balancer configurations.
+            - echo "Promotion to production completed."
+          deployment: production # Mark as a production deployment
+          trigger: manual  # Require manual approval before deploying to production
+          approve: true # Require manual approval
 ```
