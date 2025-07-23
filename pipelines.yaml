@@ -1,108 +1,85 @@
 ```yaml
 # tech_stack_detector.py
+# Pipeline for building, testing, and deploying a Java application using Maven.
+# Includes stages for checkout, build, test, code analysis, and deployment.
+# Leverages Maven for dependency management and build automation.
+# Uses SonarQube for static code analysis.
+# Deploys to a specified environment (e.g., staging, production).
+
 stages:
-  - stage: Build
-    displayName: Build and Test
-    jobs:
-      - job: MavenBuild
-        displayName: Maven Build and Test
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: Maven@3
-            displayName: 'Maven Build with Tests'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              mavenOptions: '-Xmx3072m'
-              javaHomeOption: 'JDKVersion'
-              jdkVersionOption: '1.11'
-              jdkArchitectureOption: 'x64'
-              publishJUnitResults: true
-              testResultsFiles: '**/surefire-reports/TEST-*.xml'
-              codeCoverageToolOption: 'Cobertura'
-              codeCoverageFailIfEmpty: true
+  - Checkout
+  - Build
+  - Test
+  - SonarQube Analysis
+  - Deploy
 
-  - stage: SonarQubeAnalysis
-    displayName: SonarQube Analysis
-    dependsOn: Build
-    condition: succeeded()
-    jobs:
-      - job: SonarQube
-        displayName: Perform SonarQube Analysis
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: SonarSource.sonarqube.15B84CA1-B62F-4A2A-A403-89B77A063149.SonarQubePrepare@4
-            displayName: 'Prepare analysis on SonarQube'
-            inputs:
-              SonarQube: 'your_sonarqube_connection'  # Replace with your SonarQube service connection name
-              scannerMode: 'Maven'
-              projectKey: 'your_project_key' # Replace with your SonarQube project key
-              projectName: 'Your Project Name'  # Replace with your project name
+Checkout:
+  stage: Checkout
+  image: alpine/git:latest
+  script:
+    - echo "Checking out the code..."
+    - git clone $CI_REPOSITORY_URL .
+  artifacts:
+    paths:
+      - .
 
-          - task: Maven@3
-            displayName: 'Maven Build with SonarQube Analysis'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              mavenOptions: '-Xmx3072m'
-              javaHomeOption: 'JDKVersion'
-              jdkVersionOption: '1.11'
-              jdkArchitectureOption: 'x64'
-              goals: 'clean verify sonar:sonar'
+Build:
+  stage: Build
+  image: maven:3.8.6-jdk-11
+  script:
+    - echo "Building the application with Maven..."
+    - mvn clean install -DskipTests
+  artifacts:
+    paths:
+      - target/*.jar
 
-          - task: SonarSource.sonarqube.6D01813A-9584-4CAA-8D6A-6EE5AA81AC5C.SonarQubePublish@5
-            displayName: 'Publish Quality Gate Result'
-            inputs:
-              pollingTimeoutSec: '300'
+Test:
+  stage: Test
+  image: maven:3.8.6-jdk-11
+  script:
+    - echo "Running unit tests with Maven..."
+    - mvn test
+  dependencies:
+    - Build
+  artifacts:
+    reports:
+      junit: target/surefire-reports/TEST-*.xml
 
-  - stage: Package
-    displayName: Package Artifact
-    dependsOn: SonarQubeAnalysis
-    condition: and(succeeded(), eq(variables['SonarQube.QualityGate.Status'], 'OK'))
-    jobs:
-      - job: PackageArtifact
-        displayName: Package JAR Artifact
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: CopyFiles@2
-            displayName: 'Copy Files to Artifact Staging Directory'
-            inputs:
-              SourceFolder: '$(System.DefaultWorkingDirectory)'
-              Contents: 'target/*.jar'
-              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+SonarQube Analysis:
+  stage: SonarQube Analysis
+  image: maven:3.8.6-jdk-11
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the SonarScanner cache
+    GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required for SonarQube analysis
+  script:
+    - echo "Running SonarQube analysis..."
+    - mvn sonar:sonar -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN
+  dependencies:
+    - Build
+    - Test
+  allow_failure: true
 
-          - task: PublishBuildArtifacts@1
-            displayName: 'Publish Artifact'
-            inputs:
-              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'drop'
-              publishLocation: 'Container'
+Deploy:
+  stage: Deploy
+  image: alpine/k8s:1.24.2
+  variables:
+    KUBE_NAMESPACE: "default"
+  script:
+    - echo "Deploying the application..."
+    - echo "Deploying to environment: $ENVIRONMENT"
+    - kubectl apply -f deployment.yaml -n $KUBE_NAMESPACE
+    - kubectl apply -f service.yaml -n $KUBE_NAMESPACE
+  dependencies:
+    - Build
+  environment:
+    name: $ENVIRONMENT
+    url: $DEPLOYMENT_URL
+  only:
+    - main # or specify a branch like 'release'
 
-  - stage: Deploy
-    displayName: Deploy to Environment
-    dependsOn: Package
-    condition: succeeded()
-    jobs:
-      - deployment: DeployToDev
-        displayName: Deploy to Development Environment
-        environment: 'Development'  # Replace with your environment name
-        pool:
-          vmImage: ubuntu-latest
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - task: DownloadPipelineArtifact@2
-                  displayName: 'Download Artifact'
-                  inputs:
-                    artifact: 'drop'
-                    path: '$(System.ArtifactsDirectory)'
-
-                - task: AzureWebApp@1  #Example Deployment -  Customize as Needed
-                  displayName: 'Deploy to Azure App Service'
-                  inputs:
-                    azureSubscription: 'your_azure_subscription' #Replace with your Azure subscription service connection name
-                    appName: 'your_app_name'  # Replace with your Azure App Service name
-                    package: '$(System.ArtifactsDirectory)/**/*.jar'
+variables:
+  MAVEN_CLI_OPTS: "-s .m2/settings.xml --batch-mode --errors --fail-at-end --show-version"
+  # Define environments
+  ENVIRONMENT: "staging" # default environment if not specified
+  DEPLOYMENT_URL: "http://example.com" # replace with your deployment URL
 ```
