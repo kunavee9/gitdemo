@@ -6,69 +6,66 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18.x'
-      - name: Install dependencies
-        run: npm install
-      - name: Run ESLint
-        run: npm run lint # Assuming you have a lint script in package.json
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18.x'
-      - name: Install dependencies
-        run: npm install
-      - name: Run tests
-        run: npm run test # Assuming you have a test script in package.json
-
   build:
     runs-on: ubuntu-latest
-    needs: [lint, test]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
+
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v3
         with:
           node-version: '18.x'
+
       - name: Install dependencies
         run: npm install
-      - name: Build project
-        run: npm run build # Assuming you have a build script in package.json
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: dist
-          path: dist # Or your build output directory
-  
-  deploy:
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: dist
-          path: dist
-      - name: Deploy to Production #Example deployment step - replace with your actual deployment steps
+
+      - name: Run linters
         run: |
-          echo "Deploying to production..."
-          # Add your deployment commands here
-          # e.g., deploying to a server, cloud provider, etc.
-          echo "Deployment complete!"
+          npm run lint
+          npm run format
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build project
+        run: npm run build
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: unittests
+          fail_ci_if_error: true
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: Production
+      url: ${{ secrets.PRODUCTION_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18.x'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build project
+        run: npm run build
+
+      - name: Deploy to Production
+        run: |
+          echo "Deploying to Production..."
+          # Add your deployment script here
+          # Example: ssh user@host "cd /var/www/app && git pull origin main && npm install && pm2 restart app"
+          echo "Deployment successful!"
 ```
