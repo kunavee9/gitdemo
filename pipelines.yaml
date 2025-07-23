@@ -1,53 +1,62 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for Java (Maven) projects
-# Includes build, test, and artifact deployment stages.
+# Pipeline for building, testing, and deploying a Java application using Maven.
+# This pipeline assumes a standard Maven project structure.
 
 stages:
   - name: Build
     steps:
       - step:
-          name: Build and Analyze
-          image: maven:3.8.5-openjdk-17 # Using a specific maven image for consistency
+          name: Build with Maven
+          image: maven:3.8.6-openjdk-17 # Use a specific Maven and JDK version for consistency
           caches:
-            - maven
+            - maven  # Cache Maven dependencies for faster builds
           script:
-            - echo "Starting build process..."
-            - mvn clean install -DskipTests  # Build the project, skipping tests initially
-            - echo "Build completed."
+            - echo "Starting Maven build..."
+            - mvn clean install -DskipTests # Clean, compile, and package the application, skipping tests during build
+          artifacts:
+            - target/* # Capture the built JAR/WAR file
+
   - name: Test
     steps:
       - step:
-          name: Unit Tests
-          image: maven:3.8.5-openjdk-17
+          name: Run Unit Tests
+          image: maven:3.8.6-openjdk-17
           caches:
             - maven
           script:
             - echo "Running unit tests..."
-            - mvn test # Run unit tests
-            - echo "Unit tests completed."
-  - name: Package
+            - mvn test # Execute unit tests
+          # Add test reporting, if applicable.  For example:
+          # reports:
+          #   junit: target/surefire-reports/*.xml
+
+  - name: SonarQube Analysis (Optional)
     steps:
       - step:
-          name: Package Artifact
-          image: maven:3.8.5-openjdk-17
+          name: Run SonarQube Analysis
+          image: maven:3.8.6-openjdk-17
           caches:
             - maven
           script:
-            - echo "Packaging artifact..."
-            - mvn package # Package the application
-            - echo "Artifact packaged."
-          artifacts:
-            - target/*.jar  # Specify the artifact to be saved
+            - echo "Starting SonarQube analysis..."
+            # Configure SonarQube properties as needed
+            - mvn sonar:sonar -Dsonar.host.url=$SONARQUBE_HOST_URL -Dsonar.login=$SONARQUBE_TOKEN
+          # Requires environment variables: SONARQUBE_HOST_URL, SONARQUBE_TOKEN
 
-  - name: Deploy
+  - name: Deploy (Optional)
     steps:
       - step:
-          name: Deploy to Repository
-          image: alpine/git # Using git image for deployment (example)
+          name: Deploy to Staging
+          image: maven:3.8.6-openjdk-17
           script:
-            - echo "Deploying artifact..."
-            # Replace with your actual deployment script
-            # Example: scp target/*.jar user@host:/path/to/deploy/
-            - echo "Artifact deployed (Placeholder - Implement actual deployment)"
+            - echo "Deploying to staging..."
+            # Add deployment logic here (e.g., using scp, a deployment tool, etc.)
+            # Requires configuring appropriate credentials and deployment scripts
+          # You'll need to adapt this step to your specific deployment environment.
+
+          # Example deployment to a remote server using scp (replace with your actual setup):
+          # - scp target/*.jar user@staging_server:/path/to/deployment/directory/
+          # Remember to configure SSH keys or passwordless login for the 'scp' command.
+
 ```
