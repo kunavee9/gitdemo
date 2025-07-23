@@ -1,0 +1,69 @@
+```yaml
+# tech_stack_detector.py
+# Pipeline for Java (Maven) projects
+
+stages:
+  - name: Build
+    steps:
+      - step:
+          name: Checkout
+          type: git-checkout
+          repo: self
+          fail_fast: true
+
+      - step:
+          name: Setup Java and Maven
+          image: maven:3.8.6-openjdk-17
+          script:
+            - echo "JAVA_HOME is $JAVA_HOME"
+            - echo "Maven version:"
+            - mvn -v
+
+      - step:
+          name: Build and Test
+          image: maven:3.8.6-openjdk-17
+          caches:
+            - maven
+          script:
+            - mvn clean install -DskipTests=false # Build and run tests
+          fail_fast: true
+
+  - name: SonarQube Analysis
+    steps:
+      - step:
+          name: SonarQube Scan
+          image: maven:3.8.6-openjdk-17
+          script:
+            - mvn sonar:sonar -Dsonar.host.url=$SONARQUBE_URL -Dsonar.login=$SONARQUBE_TOKEN # Perform SonarQube analysis.  Variables must be defined in Bitbucket.
+          artifacts:
+            - target/*
+          condition: ${BITBUCKET_BRANCH} == "main" # Only run on main branch or other configured release branch
+          fail_fast: true
+
+  - name: Deploy
+    steps:
+      - step:
+          name: Deploy to Staging
+          image: maven:3.8.6-openjdk-17
+          script:
+            - echo "Deploying to staging..."
+            - # Add your deployment script here (e.g., using SSH, SCP, or a deployment tool)
+            - echo "Deployment to staging complete."
+          condition: ${BITBUCKET_BRANCH} == "develop"
+          fail_fast: true
+
+      - step:
+          name: Deploy to Production
+          image: maven:3.8.6-openjdk-17
+          script:
+            - echo "Deploying to production..."
+            - # Add your deployment script here (e.g., using SSH, SCP, or a deployment tool)
+            - echo "Deployment to production complete."
+          condition: ${BITBUCKET_BRANCH} == "main" #  Deploy only from the main branch
+          fail_fast: true
+          trigger: manual # Requires manual approval
+
+definitions:
+  caches:
+    maven: ~/.m2/repository
+```
