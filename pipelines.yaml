@@ -1,0 +1,133 @@
+```groovy
+pipeline {
+    agent {
+        docker {
+            image 'node:16-alpine' // Or your preferred Node.js image
+            args '-v /var/run/docker.sock:/var/run/docker.sock' // Enable Docker-in-Docker if needed
+        }
+    }
+
+    environment {
+        // Define environment variables used throughout the pipeline
+        NODE_ENV = 'production'
+        REACT_APP_API_URL = 'https://api.example.com' // Example API URL
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git credentialsId: 'your-git-credentials-id', url: 'your-git-repository-url'
+            }
+        }
+
+        stage('Dependencies') {
+            steps {
+                sh 'npm install'
+            }
+        }
+
+        stage('Tests') {
+            steps {
+                sh 'npm test -- --coverage' // Run tests with coverage reporting
+
+                // Optional: Publish test results (requires plugins like JUnit)
+                // junit 'reports/junit.xml'
+
+                // Optional: Publish coverage report (requires plugins like Cobertura)
+                // cobertura 'reports/cobertura.xml'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'npm run build' // Build the React application
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'build/**' // Archive the build directory
+                }
+            }
+        }
+       stage('Push to Artifact Repository') {
+            steps {
+                script {
+                    // Assuming you're using JFrog Artifactory
+                    // Modify the URL and credentials accordingly
+                    def serverUrl = 'your-artifactory-server-url'
+                    def repoKey = 'your-artifactory-repository-key'
+                    def deployPath = "${JOB_NAME}/${BUILD_NUMBER}" // Customize the path as needed
+
+                    // Install JFrog CLI (if not already installed on the agent)
+                    sh 'curl -fL https://getcli.jfrog.io | sh'
+
+                    // Configure JFrog CLI
+                    sh "jfrog config add default --url=${serverUrl} --user=your-artifactory-username --password=your-artifactory-password"
+
+                    // Deploy the build artifacts
+                    sh "jfrog rt u build/* ${repoKey}/${deployPath}"
+
+                    // Create build info (optional but recommended for tracking)
+                    sh "jfrog rt bp ${JOB_NAME} ${BUILD_NUMBER}"
+
+                    // Publish build info to Artifactory
+                    sh "jfrog rt bpu ${JOB_NAME} ${BUILD_NUMBER}"
+
+                    // Clean up JFrog CLI config (optional)
+                    sh "jfrog config rm default"
+                }
+            }
+        }
+
+
+        stage('Deploy to Staging') {
+            when {
+                branch 'main'  // Or your specific branch
+            }
+            steps {
+                script {
+                    // Example: Deploy to an AWS S3 bucket (replace with your deployment method)
+                    // Requires the AWS CLI to be configured on the agent.
+
+                   sh '''
+                        aws s3 sync build/ s3://your-s3-staging-bucket/ --delete
+                   '''
+                }
+            }
+        }
+
+
+        stage('Deploy to Production') {
+             when {
+                expression {
+                   return env.BRANCH_NAME == 'main' && env.TAG_NAME != null //Deploy if only the tag is availbale and the branch is master
+                }
+            }
+            input {
+                message "Approve deployment to production?"
+            }
+            steps {
+               script {
+                    // Example: Deploy to an AWS S3 bucket (replace with your deployment method)
+                    // Requires the AWS CLI to be configured on the agent.
+
+                   sh '''
+                        aws s3 sync build/ s3://your-s3-production-bucket/ --delete
+                   '''
+                }
+            }
+        }
+
+    }
+    post {
+        always {
+            cleanWs() // Clean the workspace after each build
+        }
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed!'
+        }
+    }
+}
+```
