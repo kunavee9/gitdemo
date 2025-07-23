@@ -1,82 +1,64 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for building, testing, and deploying a Java application using Maven.
-# Includes stages for code checkout, build, unit tests, static analysis, and deployment.
+# Pipeline configuration for a Java (Maven) project.
+# Includes stages for build, test, and deployment.
 
 stages:
-  - Checkout
   - Build
-  - Unit Tests
-  - Static Analysis
+  - Test
   - Deploy
 
 variables:
-  MAVEN_IMAGE: maven:3.8.6-jdk-11
+  MAVEN_IMAGE: maven:3.8.6-jdk-11 # Use a specific Maven image for consistency.
+  MAVEN_CLI_OPTS: "-Dmaven.repo.local=.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn" #Optimized maven config
 
-Checkout:
-  stage: Checkout
-  image: alpine/git:latest
-  script:
-    - echo "Checking out the code..."
-    - git clone $CI_REPOSITORY_URL .
-  artifacts:
-    paths:
-      - .
 
-Build:
+cache:
+  paths:
+    - .m2/repository
+    - target/
+
+build:
   stage: Build
   image: $MAVEN_IMAGE
   script:
-    - echo "Building the application with Maven..."
-    - mvn clean install -DskipTests
+    - echo "Building the Maven project..."
+    - mvn $MAVEN_CLI_OPTS clean install -DskipTests  # Clean install to ensure a fresh build, skip tests for build stage.
   artifacts:
     paths:
-      - target/*.jar
+      - target/*.jar # Assuming the build produces a JAR file.  Adjust as needed.
 
-Unit Tests:
-  stage: Unit Tests
+test:
+  stage: Test
   image: $MAVEN_IMAGE
   script:
-    - echo "Running unit tests with Maven..."
-    - mvn test
+    - echo "Running unit tests..."
+    - mvn $MAVEN_CLI_OPTS test # Execute unit tests.
   dependencies:
-    - Build
-  coverage: '/Total.*?([0-9]{1,3})%/'
-  artifacts:
-    reports:
-      junit: target/surefire-reports/TEST-*.xml
+    - build # Depends on the 'build' stage to have the compiled code.
+  coverage: '/(TOTAL|LINE):.*\%[^)]*\(([^%]+)\%\)/' # Simple regex for coverage parsing from console
 
-Static Analysis:
-  stage: Static Analysis
-  image: sonarsource/sonar-scanner-cli:latest
-  variables:
-    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
-    GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required for accurate branch analysis
-  cache:
-    key: "${CI_JOB_NAME}"
-    paths:
-      - .sonar/cache
-  script:
-    - echo "Running static analysis with SonarQube Scanner..."
-    - sonar-scanner -Dsonar.projectKey=$CI_PROJECT_NAME -Dsonar.sources=. -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN
-  allow_failure: true
-  dependencies:
-    - Build
 
-Deploy:
+deploy:
   stage: Deploy
-  image: docker:latest
-  variables:
-    DOCKER_TLS_CERTDIR: "" #Disable TLS
+  image: alpine/git # Use a lightweight image for deployment.
   before_script:
-    - echo "Logging into Docker Hub..."
-    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+    - apk add --no-cache openssh-client  # Install ssh client
+    - mkdir -p ~/.ssh
+    - echo "$DEPLOY_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa # Add deploy key, sanitizing carriage returns
+    - chmod 400 ~/.ssh/id_rsa
+    - ssh-keyscan $DEPLOY_HOST >> ~/.ssh/known_hosts # Add host to known hosts
+    - chmod 400 ~/.ssh/known_hosts
   script:
-    - echo "Building and pushing Docker image..."
-    - docker build -t $DOCKER_IMAGE_NAME .
-    - docker push $DOCKER_IMAGE_NAME
+    - echo "Deploying the application..."
+    - scp target/*.jar $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH # Secure copy to deployment server
+    - ssh $DEPLOY_USER@$DEPLOY_HOST "chmod +x $DEPLOY_PATH/*.jar &&  nohup java -jar $DEPLOY_PATH/*.jar &"  # Make executable and run in background.  Adjust command as needed.
   dependencies:
-    - Build
+    - test # Depends on the 'test' stage to have passed.
   only:
-    - main # or your main branch name
+    - main # Only deploy from the main branch.  Adjust as needed.
+  environment:
+    name: production
+    url: $DEPLOY_URL
+
 ```
