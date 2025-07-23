@@ -9,61 +9,60 @@ stages:
           name: Checkout
           type: git-checkout
           repo: self
-          fail_fast: true
-
       - step:
-          name: Setup Java and Maven
+          name: Set up JDK
           image: maven:3.8.6-openjdk-17
           script:
-            - echo "JAVA_HOME is $JAVA_HOME"
-            - echo "Maven version:"
-            - mvn -v
-
+            - echo "Setting up JDK 17"
+            - java -version
       - step:
-          name: Build and Test
+          name: Maven Build
           image: maven:3.8.6-openjdk-17
           caches:
             - maven
           script:
-            - mvn clean install -DskipTests=false # Build and run tests
-          fail_fast: true
-
-  - name: SonarQube Analysis
+            - echo "Starting Maven build"
+            - mvn clean install -DskipTests # Consider removing skipTests for actual testing
+  - name: Test
     steps:
       - step:
-          name: SonarQube Scan
+          name: Run Tests
           image: maven:3.8.6-openjdk-17
+          caches:
+            - maven
           script:
-            - mvn sonar:sonar -Dsonar.host.url=$SONARQUBE_URL -Dsonar.login=$SONARQUBE_TOKEN # Perform SonarQube analysis.  Variables must be defined in Bitbucket.
+            - echo "Running unit tests"
+            - mvn test # Execute tests.  May need configuration in pom.xml
           artifacts:
-            - target/*
-          condition: ${BITBUCKET_BRANCH} == "main" # Only run on main branch or other configured release branch
-          fail_fast: true
+            - target/surefire-reports/* # Saves test results (if applicable)
+
+  - name: Package
+    steps:
+      - step:
+          name: Package Application
+          image: maven:3.8.6-openjdk-17
+          caches:
+            - maven
+          script:
+            - echo "Packaging application"
+            - mvn package # Package the application. May need plugin configuration in pom.xml
+          artifacts:
+            - target/*.jar # Saves the packaged jar/war
 
   - name: Deploy
     steps:
       - step:
-          name: Deploy to Staging
-          image: maven:3.8.6-openjdk-17
+          name: Deploy to Staging (Example)
+          image: alpine/ssh
           script:
-            - echo "Deploying to staging..."
-            - # Add your deployment script here (e.g., using SSH, SCP, or a deployment tool)
-            - echo "Deployment to staging complete."
-          condition: ${BITBUCKET_BRANCH} == "develop"
-          fail_fast: true
+            - echo "Deploying to staging environment (Example)"
+            - echo "Replace this with your actual deployment script"
+            # Example: scp target/*.jar user@staging:/path/to/deploy/
+            # Example: ssh user@staging "service myapp restart"
+          # Add conditionals or triggers here for specific deployment scenarios
 
-      - step:
-          name: Deploy to Production
-          image: maven:3.8.6-openjdk-17
-          script:
-            - echo "Deploying to production..."
-            - # Add your deployment script here (e.g., using SSH, SCP, or a deployment tool)
-            - echo "Deployment to production complete."
-          condition: ${BITBUCKET_BRANCH} == "main" #  Deploy only from the main branch
-          fail_fast: true
-          trigger: manual # Requires manual approval
-
-definitions:
-  caches:
-    maven: ~/.m2/repository
+caches:
+  maven:
+    paths:
+      - /root/.m2/repository
 ```
