@@ -1,12 +1,9 @@
 ```yaml
 # tech_stack_detector.py
-name: React App CI/CD Pipeline
+name: React CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
     branches:
       - main
 
@@ -21,55 +18,49 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'  # Use a supported Node.js version
+          node-version: '18' # Or your preferred Node.js version
 
       - name: Install dependencies
-        run: npm install # Or yarn install if using Yarn
-
-      - name: Run linters
-        run: |
-          npm run lint # Or yarn lint
+        run: npm install
 
       - name: Run tests
-        run: npm run test -- --coverage # Or yarn test.  Include coverage.
+        run: npm test # Or your test command (e.g., yarn test)
 
-      - name: Build production assets
-        run: npm run build # Or yarn build
+      - name: Build production bundle
+        run: npm run build # Or your build command (e.g., yarn build)
 
-      - name: Analyze code quality (SonarCloud)
-        uses: sonarsource/sonarcloud-github-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to trigger analysis
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # Insert your SonarCloud token
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
         with:
-          args: >
-            -Dsonar.organization=your-sonarcloud-org # Replace with your SonarCloud organization key
-            -Dsonar.projectKey=your-sonarcloud-project # Replace with your SonarCloud project key
+          name: build
+          path: build
 
   deploy:
-    needs: build  # Ensure build job completes successfully first
+    needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: Production  # Define environment
+    if: github.ref == 'refs/heads/main' # Only deploy from main branch
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build
+          path: build
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1  # Replace with your AWS region
-
-      - name: Install AWS CLI
-        run: |
-          sudo apt-get update
-          sudo apt-get install awscli -y
+          aws-region: us-east-1 # Replace with your AWS region
 
       - name: Deploy to S3 bucket
         run: |
-          aws s3 sync ./build s3://your-s3-bucket --delete # Replace with your S3 bucket name
-          aws cloudfront create-invalidation --distribution-id your-cloudfront-distribution-id --paths "/*"  # Optional: invalidate CloudFront cache. Replace with your CloudFront distribution ID.
+          aws s3 sync build s3://${{ secrets.AWS_S3_BUCKET }} --delete
+
+      - name: Invalidate CloudFront cache (optional)
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.AWS_CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
 ```
