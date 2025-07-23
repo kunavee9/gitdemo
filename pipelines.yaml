@@ -1,151 +1,44 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline definition for a Java (Maven) project.
-# Follows industry best practices for building, testing, and deploying Java applications.
-# Integrates with security scanning tools for vulnerability detection.
-
 stages:
-  - stage: Validate
-    displayName: 'Validate and Lint'
-    jobs:
-      - job: ValidateCode
-        displayName: 'Validate Code Quality'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: Maven@3
-            displayName: 'Run Checkstyle'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'checkstyle:checkstyle'
-              checkstyleFailOnError: false  # Consider failing the build if Checkstyle finds major issues
+  - name: Build
+    steps:
+      - step:
+          name: Build and Test
+          image: maven:3.8.6-openjdk-17 # Using a specific Maven and JDK version for consistency
+          caches:
+            - maven # Caching Maven dependencies
+          script:
+            - echo "Building and testing the Java application..."
+            - mvn clean install # Clean, compile, test, and package the application
+          artifacts:
+            - target/* # Store the built JAR/WAR file as an artifact
 
-          - task: Maven@3
-            displayName: 'Run Spotbugs'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'spotbugs:check'
+  - name: SonarQube Analysis
+    steps:
+      - step:
+          name: SonarQube Analysis
+          image: maven:3.8.6-openjdk-17 # Consistent environment
+          caches:
+            - maven
+          script:
+            - echo "Running SonarQube analysis..."
+            - mvn sonar:sonar -Dsonar.host.url=$SONARQUBE_URL -Dsonar.login=$SONARQUBE_TOKEN # Passing SonarQube URL and token as environment variables
+          after_script:
+            - echo "SonarQube analysis completed."
 
-  - stage: Build
-    displayName: 'Build and Unit Test'
-    dependsOn: Validate
-    jobs:
-      - job: BuildAndTest
-        displayName: 'Build and Run Unit Tests'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: Maven@3
-            displayName: 'Build with Maven'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'clean install' # Build and run unit tests
-
-          - task: PublishTestResults@2
-            displayName: 'Publish Test Results'
-            inputs:
-              testResultsFiles: '**/surefire-reports/TEST-*.xml' # Location of JUnit test results
-              testRunTitle: 'Unit Test Results'
-              testRunPublisher: 'JUnit'
-
-  - stage: SonarAnalysis
-    displayName: 'SonarQube Analysis'
-    dependsOn: Build
-    condition: and(succeeded(), ne(variables['skipSonar'], 'true'))
-    jobs:
-      - job: SonarAnalysis
-        displayName: 'Run SonarQube Analysis'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: SonarQubePrepare@5
-            displayName: 'Prepare SonarQube analysis configuration'
-            inputs:
-              SonarQube: 'your_sonarqube_connection' # Replace with your SonarQube connection name
-              scannerMode: 'Maven'
-              projectKey: 'your_project_key'       # Replace with your SonarQube project key
-              projectName: '$(Build.Repository.Name)'
-
-          - task: Maven@3
-            displayName: 'Run SonarQube analysis'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'sonar:sonar'
-
-          - task: SonarQubePublish@5
-            displayName: 'Publish Quality Gate Result'
-            inputs:
-              pollingTimeoutSec: '300'
-  - stage: Package
-    displayName: 'Package Application'
-    dependsOn: [Build, SonarAnalysis]
-    condition: and(succeeded(), ne(variables['skipPackage'], 'true'))
-    jobs:
-      - job: PackageApplication
-        displayName: 'Package Jar'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-
-          - task: Maven@3
-            displayName: 'Package'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'package'
-
-          - task: CopyFiles@2
-            displayName: 'Copy Files to Artifact Staging Directory'
-            inputs:
-              SourceFolder: '$(System.DefaultWorkingDirectory)'
-              Contents: 'target/*.jar'
-              TargetFolder: '$(Build.ArtifactStagingDirectory)'
-
-          - task: PublishBuildArtifacts@1
-            displayName: 'Publish Artifact: Jar'
-            inputs:
-              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'drop'
-              publishLocation: 'Container'
-
-  - stage: SecurityScan
-    displayName: 'Security Scan'
-    dependsOn: Package
-    condition: and(succeeded(), ne(variables['skipSecurityScan'], 'true'))
-    jobs:
-      - job: 'DependencyCheck'
-        displayName: 'Dependency Check'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: DependencyCheck@4
-            inputs:
-              projectName: '$(Build.Repository.Name)'
-              reportFormat: 'HTML' # Generate HTML report, other formats available
-              scanPath: '$(System.DefaultWorkingDirectory)/pom.xml'
-
-          - task: PublishBuildArtifacts@1
-            displayName: 'Publish Dependency Check Report'
-            inputs:
-              PathtoPublish: '$(System.DefaultWorkingDirectory)/dependency-check-report.html'
-              ArtifactName: 'DependencyCheckReport'
-              publishLocation: 'Container'
-
-
-  - stage: Deploy
-    displayName: 'Deploy Application'
-    dependsOn: [Package, SecurityScan]
-    condition: and(succeeded(), ne(variables['skipDeploy'], 'true'))
-    jobs:
-      - job: DeployToEnvironment
-        displayName: 'Deploy to Azure App Service'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-
-          - task: AzureWebApp@1
-            displayName: 'Deploy to Azure App Service'
-            inputs:
-              azureSubscription: 'your_azure_subscription' # Replace with your Azure subscription name
-              appName: 'your_app_service_name'           # Replace with your App Service name
-              package: '$(Build.ArtifactStagingDirectory)/**/*.jar'
+  - name: Docker Build and Push
+    steps:
+      - step:
+          name: Build Docker Image
+          image: docker:20.10.12 # Using a specific Docker version for build reproducibility
+          services:
+            - docker # Enabling Docker-in-Docker service
+          script:
+            - echo "Building Docker image..."
+            - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD # Docker login with username and password from environment variables
+            - docker build -t $DOCKER_IMAGE_NAME . # Building the Docker image
+            - docker push $DOCKER_IMAGE_NAME # Pushing the Docker image to the registry
+          after_script:
+            - echo "Docker image built and pushed."
 ```
