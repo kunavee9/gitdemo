@@ -1,90 +1,64 @@
 ```yaml
 # tech_stack_detector.py
 # Pipeline for building and deploying a Java application using Maven.
-# Follows industry best practices for Java/Maven projects.
-# Includes stages for linting, unit testing, building, artifact storage, and deployment.
 
 stages:
-  - Lint
-  - Test
-  - Build
-  - Package
-  - Deploy
+  - name: Build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
 
-variables:
-  MAVEN_IMAGE: maven:3.8.6-jdk-11
-  MAVEN_CLI_OPTS: "-Dmaven.repo.local=.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn"
-  PROJECT_NAME: my-java-app # Replace with your project name
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
 
-cache:
-  paths:
-    - .m2/repository
-    - target/
+      - name: Maven Package
+        run: mvn -B package --file pom.xml
 
-lint:
-  image: ${MAVEN_IMAGE}
-  stage: Lint
-  script:
-    - echo "Running code linting..."
-    - mvn spotless:check
-  tags:
-    - docker
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: target
+          path: target/*.jar
 
-test:
-  image: ${MAVEN_IMAGE}
-  stage: Test
-  script:
-    - echo "Running unit tests..."
-    - mvn ${MAVEN_CLI_OPTS} test
-  tags:
-    - docker
-  coverage: '/Total.*?([0-9]{1,3})%/'
-  artifacts:
-    reports:
-      junit: target/surefire-reports/TEST-*.xml
+  - name: Test
+    needs: Build
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: target
+          path: target
 
-build:
-  image: ${MAVEN_IMAGE}
-  stage: Build
-  script:
-    - echo "Building the application..."
-    - mvn ${MAVEN_CLI_OPTS} compile
-  tags:
-    - docker
-  artifacts:
-    paths:
-      - target/*.jar
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
 
-package:
-  image: ${MAVEN_IMAGE}
-  stage: Package
-  script:
-    - echo "Packaging the application..."
-    - mvn ${MAVEN_CLI_OPTS} package -DskipTests
-  tags:
-    - docker
-  artifacts:
-    paths:
-      - target/*.jar # Store the JAR file as an artifact
+      - name: Maven Verify
+        run: mvn -B verify --file pom.xml
 
-deploy:
-  image: alpine/k8s:1.26.3
-  stage: Deploy
-  variables:
-    KUBE_NAMESPACE: default # Replace with your Kubernetes namespace
-    DEPLOYMENT_FILE: deployment.yaml # Replace with your deployment file
-    SERVICE_FILE: service.yaml # Replace with your service file
-  script:
-    - echo "Deploying to Kubernetes..."
-    - apk add --no-cache curl
-    - kubectl apply -n ${KUBE_NAMESPACE} -f ${DEPLOYMENT_FILE}
-    - kubectl apply -n ${KUBE_NAMESPACE} -f ${SERVICE_FILE}
-    - echo "Deployment complete!"
-  environment:
-    name: production
-    url: http://your-application-url.com # Replace with your application URL
-  tags:
-    - docker
-  only:
-    - main # Only deploy from the main branch (or your chosen production branch)
+  - name: Deploy
+    needs: Test
+    environment:
+      name: Production
+      url: your_deployment_url # Replace with your actual deployment URL
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: target
+          path: target
+
+      - name: Deploy to Production # Replace with your deployment script
+        run: |
+          echo "Deploying to Production..."
+          # Add your deployment commands here. For example:
+          # scp target/*.jar user@your_server:/path/to/deployment/directory/
+          # ssh user@your_server "sudo systemctl restart your_service"
 ```
