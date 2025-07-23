@@ -1,93 +1,85 @@
 ```yaml
 # tech_stack_detector.py
 # Pipeline for Java (Maven) projects.
-# Follows industry best practices for CI/CD.
+# This pipeline includes stages for building, testing, and deploying a Java application using Maven.
 
 stages:
-  - Validate
-  - Build
-  - Test
-  - Analyze
-  - Package
-  - Deploy
+  - name: Build
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Maven Build
+        run: mvn clean install -DskipTests=true # Build the project, skipping tests for now
 
-variables:
-  MAVEN_IMAGE: maven:3.8.6-openjdk-17
-  MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version"
-  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"  # Ensure local repo is used
+  - name: Test
+    needs: Build
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Maven Test
+        run: mvn test # Run the tests
 
-validate:
-  stage: Validate
-  image: $MAVEN_IMAGE
-  script:
-    - echo "Validating pom.xml"
-    - mvn $MAVEN_CLI_OPTS validate
+  - name: Code Analysis
+    needs: Test
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Run SonarQube Analysis
+        uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      - name: SonarQube Quality Gate check
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-build:
-  stage: Build
-  image: $MAVEN_IMAGE
-  script:
-    - echo "Building the application..."
-    - mvn $MAVEN_CLI_OPTS clean compile
+  - name: Package
+    needs: Code Analysis
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Maven Package
+        run: mvn package # Package the application (e.g., create a JAR or WAR file)
 
-test:
-  stage: Test
-  image: $MAVEN_IMAGE
-  script:
-    - echo "Running tests..."
-    - mvn $MAVEN_CLI_OPTS test
-  artifacts:
-    reports:
-      junit: target/surefire-reports/TEST-*.xml
-    paths:
-      - target/surefire-reports/
-
-analyze:
-  stage: Analyze
-  image: $MAVEN_IMAGE
-  script:
-    - echo "Running static analysis..."
-    - mvn $MAVEN_CLI_OPTS checkstyle:checkstyle spotbugs:check findbugs:check
-  allow_failure: true  # Analysis failures shouldn't break the pipeline
-  artifacts:
-    paths:
-      - target/checkstyle-result.xml
-      - target/spotbugsXml.xml
-      - target/findbugsXml.xml
-
-package:
-  stage: Package
-  image: $MAVEN_IMAGE
-  script:
-    - echo "Packaging the application..."
-    - mvn $MAVEN_CLI_OPTS package
-  artifacts:
-    paths:
-      - target/*.jar  # Assuming JAR packaging
-
-deploy:
-  stage: Deploy
-  image: alpine/git
-  before_script:
-    - apk add --no-cache openssh-client
-    - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-keygen -q -N "" -f ~/.ssh/id_rsa
-    - chmod 400 ~/.ssh/id_rsa
-    - echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-    - chmod 444 ~/.ssh/known_hosts
-
-  script:
-    - echo "Deploying the application..."
-    - ssh $SSH_USER@$SSH_HOST "mkdir -p $DEPLOYMENT_PATH"
-    - scp -o StrictHostKeyChecking=no target/*.jar $SSH_USER@$SSH_HOST:$DEPLOYMENT_PATH
-    - ssh $SSH_USER@$SSH_HOST "$DEPLOYMENT_SCRIPT"
-
-  environment:
-    name: production
-    url: $DEPLOYMENT_URL
-
-  only:
-    - main  # Deploy only from the main branch
-  when: manual # Manual deployment for safety. Remove to automate
+  - name: Deploy
+    needs: Package
+    steps:
+      - name: Deploy to Production
+        run: echo "Deploying to Production..." # Placeholder for actual deployment logic.  Replace with your deployment steps (e.g., using SSH, Docker, or a cloud provider CLI).
+        # Add deployment steps here (e.g., using SSH, Docker, or a cloud provider CLI)
+        # Example using SSH:
+        # - name: Deploy via SSH
+        #   uses: appleboy/ssh-action@master
+        #   with:
+        #     host: ${{ secrets.DEPLOY_HOST }}
+        #     username: ${{ secrets.DEPLOY_USER }}
+        #     key: ${{ secrets.DEPLOY_KEY }}
+        #     script: |
+        #       cd /var/www/my-app
+        #       git pull origin main
+        #       mvn clean install
+        #       ./restart-app.sh
 
 ```
