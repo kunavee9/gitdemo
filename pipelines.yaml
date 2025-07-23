@@ -1,0 +1,46 @@
+```yaml
+# tech_stack_detector.py
+name: React CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [16.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Build production build
+        run: npm run build
+        env:
+          CI: false # Fix issues with CI build related to colors/interactive prompts
+
+      - name: Deploy to Firebase Hosting
+        if: github.ref == 'refs/heads/main' # Only deploy from main branch
+        uses: w9jds/firebase-action@releases/v6
+        with:
+          args: deploy --only hosting
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          PROJECT_ID: ${{ secrets.PROJECT_ID }}
+```
