@@ -1,83 +1,76 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline configuration for Java (Maven) project
-# Follows industry best practices for CI/CD
+name: React CI/CD Pipeline
 
-stages:
-  - name: Build
-    # Build stage: Compile, test, and package the application
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Source Code
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
         with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
+          node-version: '18' # Specify Node.js version
 
-      - name: Maven Build
-        # Runs the maven build using the pom.xml file.
-        run: mvn -B package --file pom.xml
+      - name: Install Dependencies
+        run: npm install # Install project dependencies
 
-  - name: Test
-    # Test stage: Run unit and integration tests
-    needs: Build
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v3
+      - name: Run ESLint
+        run: npm run lint # Run ESLint for code linting
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
+      - name: Run Prettier
+        run: npm run format # Run Prettier for code formatting
 
-      - name: Maven Test
-        run: mvn -B test --file pom.xml
+      - name: Run Tests
+        run: npm run test # Execute unit tests
+        env:
+          CI: true # Set CI environment variable (important for some testing frameworks)
 
-  - name: Package
-    # Package stage: Create deployable artifacts
-    needs: Test
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v3
+      - name: Build Project
+        run: npm run build # Build the React application for production
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
-
-      - name: Package Artifacts
-        run: mvn -B package --file pom.xml
-        # Package the application into a deployable artifact (e.g., JAR, WAR)
-
-      - name: Upload Artifact
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v3
         with:
-          name: package
-          path: target/*.jar # Customize the path based on your packaging
+          name: build
+          path: build # Upload the 'build' directory as an artifact
 
-  - name: Release
-    # Release stage: Publish the artifact to a repository
-    needs: Package
+  deploy:
+    needs: build # Ensure the 'build' job completes successfully before deployment
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' # Deploy only on pushes to the main branch
+
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v3
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
+      - name: Download Artifacts
+        uses: actions/download-artifact@v3
         with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
+          name: build
+          path: build
 
-      - name: Release
-        run: mvn -B deploy --file pom.xml # Execute Maven deploy goal to publish the artifact
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use Github token to allow publishing
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }} # Use GitHub secrets for AWS credentials
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1 # Specify your AWS region
+
+      - name: Deploy to S3 Bucket
+        run: aws s3 sync build s3://${{ secrets.AWS_S3_BUCKET_NAME }} --delete # Deploy the 'build' directory to an S3 bucket
+
+      - name: Invalidate CloudFront Cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.AWS_CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*" # Invalidate CloudFront cache after deployment
 ```
