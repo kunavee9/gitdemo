@@ -1,63 +1,102 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for building and deploying a Java application using Maven.
-# Includes stages for checkout, build, test, and deployment.
+# Pipeline for Java (Maven) projects.  Follows industry best practices.
+# Includes build, test, static analysis, and security scanning stages.
+# Pushes artifacts to a Maven repository.
 
 stages:
-  - checkout
-  - build
-  - test
-  - deploy
+  - Build
+  - Test
+  - Static Analysis
+  - Security Scan
+  - Publish
 
-checkout:
-  stage: checkout
-  image: alpine/git:latest
-  script:
-    - echo "Checking out the code..."
-    - git clone $CI_REPOSITORY_URL .
-    - echo "Checkout complete."
+variables:
+  MAVEN_CLI_OPTS: "-s .m2/settings.xml --batch-mode"  # Maven CLI options, including settings and batch mode
+  MAVEN_REPO_URL: "https://your.maven.repo/maven2"  # Replace with your Maven repository URL
+  MAVEN_REPO_USERNAME: "$MAVEN_USERNAME"          # Replace with your Maven repository username
+  MAVEN_REPO_PASSWORD: "$MAVEN_PASSWORD"          # Replace with your Maven repository password
+  SONAR_HOST_URL: "https://your.sonarcloud.io"       # Replace with your SonarQube/SonarCloud URL
+  SONAR_TOKEN: "$SONAR_TOKEN"                      # Replace with your SonarQube/SonarCloud token
 
-build:
-  stage: build
-  image: maven:3.8.6-openjdk-17
+before_script:
+  - echo "Starting pipeline for Java (Maven) project"
+  - echo "Setting up Maven settings.xml"
+  - mkdir -p .m2
+  - cat > .m2/settings.xml <<EOF
+<settings>
+  <servers>
+    <server>
+      <id>maven.repo</id>
+      <username>${MAVEN_REPO_USERNAME}</username>
+      <password>${MAVEN_REPO_PASSWORD}</password>
+    </server>
+  </servers>
+</settings>
+EOF
+  - echo "Maven settings.xml configured."
+
+Build:
+  stage: Build
+  image: maven:3.8.6-jdk-11 # Updated Maven and JDK versions
   script:
-    - echo "Building the application..."
-    - mvn clean install -DskipTests
-    - echo "Build complete."
+    - echo "Building the project with Maven"
+    - mvn $MAVEN_CLI_OPTS clean install -DskipTests # Skips tests during the build phase
   artifacts:
     paths:
-      - target/*.jar
+      - target/*.jar # Archive JAR files
     expire_in: 1 week
+  cache:
+    paths:
+      - .m2/repository # Cache Maven dependencies
 
-test:
-  stage: test
-  image: maven:3.8.6-openjdk-17
+Test:
+  stage: Test
+  image: maven:3.8.6-jdk-11
   script:
-    - echo "Running tests..."
-    - mvn test
-    - echo "Tests complete."
-  dependencies:
-    - build
+    - echo "Running unit tests with Maven"
+    - mvn $MAVEN_CLI_OPTS test
+  cache:
+    paths:
+      - .m2/repository
+  coverage: '/TOTAL.*%\s*covered/' # For JUnit coverage reports
 
-deploy:
-  stage: deploy
+Static Analysis:
+  stage: Static Analysis
+  image: maven:3.8.6-jdk-11
+  script:
+    - echo "Running SonarQube analysis"
+    - mvn $MAVEN_CLI_OPTS sonar:sonar -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN
+  cache:
+    paths:
+      - .m2/repository
+  allow_failure: true  # Don't fail the pipeline if static analysis fails
+
+Security Scan:
+  stage: Security Scan
   image: docker:latest
-  services:
-    - docker:dind
-  before_script:
-    - echo "Logging in to Docker Hub..."
-    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
-  script:
-    - echo "Building Docker image..."
-    - docker build -t $DOCKER_IMAGE_NAME .
-    - echo "Pushing Docker image..."
-    - docker push $DOCKER_IMAGE_NAME
-    - echo "Deployment complete."
-  dependencies:
-    - build
-  only:
-    - main # or your main branch name
   variables:
-    DOCKER_IMAGE_NAME: $DOCKER_USERNAME/$CI_PROJECT_NAME:$CI_COMMIT_SHA
+    DOCKER_TLS_CERTDIR: "" #suppress tls errors
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - echo "Running Trivy vulnerability scan"
+    - docker run --rm aquasec/trivy image --exit-code 0 --severity HIGH,CRITICAL "$CI_REGISTRY_IMAGE:latest" || true # Scan latest built image. Severity can be adjusted.  || true is to prevent failing if no docker image is present.
+    - docker run --rm aquasec/trivy fs --exit-code 0 --severity HIGH,CRITICAL . || true # Scan the file system. Useful for detecting vulnerable dependencies. || true to not fail the build.
+  cache:
+    paths:
+      - .m2/repository
+  allow_failure: true
 
+Publish:
+  stage: Publish
+  image: maven:3.8.6-jdk-11
+  script:
+    - echo "Deploying the artifact to Maven repository"
+    - mvn $MAVEN_CLI_OPTS deploy -Dmaven.install.skip=true -Dmaven.deploy.skip=false -DaltDeploymentRepository=maven.repo::default::$MAVEN_REPO_URL
+  cache:
+    paths:
+      - .m2/repository
+  only:
+    - main  # Only run on the main branch
 ```
