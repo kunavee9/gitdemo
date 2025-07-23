@@ -1,90 +1,84 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for React application deployment using best practices.
-# Includes linting, testing, building, and deploying to a staging environment.
+# CI/CD pipeline for a React application.
+# Uses Node.js for building and testing, and deploys to a cloud environment (example: AWS S3).
 
-stages:
-  - lint
-  - test
-  - build
-  - deploy_staging
+name: React CI/CD Pipeline
 
-lint:
-  stage: lint
-  image: node:latest
-  script:
-    - echo "Linting code..."
-    - npm install --global eslint
-    - eslint src/**/*.js
-  tags:
-    - docker
-  rules:
-    - changes:
-        - src/**/*
+on:
+  push:
+    branches:
+      - main  # Trigger on pushes to the main branch
+  pull_request:
+    branches:
+      - main
 
-test:
-  stage: test
-  image: node:latest
-  script:
-    - echo "Running tests..."
-    - npm install
-    - npm test -- --coverage
-  coverage: '/All files[^|]*\|[^%]*\s+([\d\.]+)/'
-  artifacts:
-    reports:
-      junit: coverage/junit.xml
-    paths:
-      - coverage/
-  tags:
-    - docker
-  rules:
-    - changes:
-        - src/**/*
-        - test/**/*
+jobs:
+  build:
+    runs-on: ubuntu-latest
 
-build:
-  stage: build
-  image: node:latest
-  script:
-    - echo "Building application..."
-    - npm install
-    - npm run build
-  artifacts:
-    paths:
-      - build/
-  tags:
-    - docker
-  rules:
-    - changes:
-        - src/**/*
-        - public/**/*
-        - package.json
-        - webpack.config.js
-  dependencies:
-    - test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-deploy_staging:
-  stage: deploy_staging
-  image: docker:latest
-  before_script:
-    - echo "Logging into Docker Hub..."
-    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
-  script:
-    - echo "Deploying to staging environment..."
-    - docker pull my-react-app:latest || true #Ignore error if image does not exist
-    - docker build -t my-react-app:staging .
-    - docker tag my-react-app:staging my-react-app:latest
-    - docker push my-react-app:latest
-    #Add the instructions to deploy to the staging enviroment.
-    - echo "Deployment complete."
-  tags:
-    - docker
-  environment:
-    name: staging
-    url: https://staging.example.com
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-      when: manual
-  dependencies:
-    - build
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x' # Use a specific Node.js version
+
+      - name: Install dependencies
+        run: npm ci # Use npm ci for clean installs
+
+      - name: Run linters
+        run: |
+          npm run lint
+          npm run format:check
+
+      - name: Run tests
+        run: npm test -- --coverage
+
+      - name: Build application
+        run: npm run build
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          flags: unittests
+          name: codecov-react
+          fail_ci_if_error: true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts
+          path: build # Upload the 'build' directory
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: Production  # Define the environment
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+          path: build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1 # Replace with your AWS region
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync build s3://your-s3-bucket --delete # Replace with your S3 bucket
+
+      - name: Invalidate CloudFront cache (Optional)
+        run: |
+          aws cloudfront create-invalidation --distribution-id your-cloudfront-distribution-id --paths "/*" # Replace with your CloudFront distribution ID
+
 ```
