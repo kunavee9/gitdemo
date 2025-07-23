@@ -1,64 +1,108 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline configuration for Java (Maven) project
-
 stages:
-  - name: Build
-    steps:
-      - step:
-          name: Checkout Code
-          type: git-checkout
-          repo: self
-  
-      - step:
-          name: Setup JDK
-          image: maven:3.8.6-openjdk-17 # Using a specific Maven and JDK version for reproducibility
-          script:
-            - echo "Setting up JDK 17" # Explicitly state the JDK version
-            - java -version # Verify Java version
+  - stage: Build
+    displayName: Build Stage
+    jobs:
+      - job: MavenBuild
+        displayName: Maven Build and Test
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: Maven@3
+            displayName: 'Maven Build'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean install'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              codeCoverageToolOption: 'JaCoCo'
+              codeCoverageJacocoReportFile: '**/jacoco-report/jacoco.xml'
+              codeCoverageFailIfEmpty: false
 
-      - step:
-          name: Maven Build and Test
-          image: maven:3.8.6-openjdk-17
-          script:
-            - echo "Starting Maven build"
-            - mvn clean install -DskipTests # Build and skip tests initially to check compilation
-            - echo "Maven build completed"
-  
-  - name: Test
-    steps:
-      - step:
-          name: Run Tests
-          image: maven:3.8.6-openjdk-17
-          script:
-            - echo "Running tests"
-            - mvn test # Run unit tests
-            - echo "Tests completed"
-          after_script:
-            - echo "Checking test results"
+  - stage: SonarQubeAnalysis
+    displayName: SonarQube Analysis
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: SonarQube
+        displayName: 'SonarQube Analysis'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: SonarQubePrepare@5
+            displayName: 'Prepare SonarQube analysis'
+            inputs:
+              SonarQube: 'your_sonarqube_service_connection'  # Replace with your SonarQube service connection name
+              scannerMode: 'Maven'
+              projectKey: 'your_project_key' # Replace with your SonarQube project key
+              projectName: 'your_project_name' # Replace with your SonarQube project name
 
-  - name: SonarQube Analysis
-    steps:
-      - step:
-          name: SonarQube Scan
-          image: maven:3.8.6-openjdk-17
-          script:
-            - echo "Starting SonarQube analysis"
-            - mvn sonar:sonar -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN # Using environment variables for SonarQube configuration
-            - echo "SonarQube analysis completed"
-          after_script:
-            - echo "Check SonarQube for quality gate status"
-          services:
-            - sonarqube  # Declare the SonarQube service
+          - task: Maven@3
+            displayName: 'Run SonarQube analysis'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'org.sonarsource.scanner.maven:sonar-maven-plugin:sonar'
 
-services:
-  sonarqube:
-    image: sonarqube:lts #Using a stable LTS version of SonarQube
-    ports:
-      - "9000:9000"
-    environment:
-      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true  # Disable bootstrap checks for easier startup during CI
+          - task: SonarQubePublish@5
+            displayName: 'Publish SonarQube quality gate result'
+            inputs:
+              pollingTimeoutSec: '300'
 
-options:
-  docker: true #Enables Docker support in the pipeline
+  - stage: Package
+    displayName: Package Stage
+    dependsOn: SonarQubeAnalysis
+    condition: succeeded()
+    jobs:
+      - job: PackageArtifact
+        displayName: Package Artifact
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: Maven@3
+            displayName: 'Maven Package'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'package'
+              publishJUnitResults: false
+
+          - task: CopyFiles@2
+            displayName: 'Copy Files to Artifact Staging Directory'
+            inputs:
+              SourceFolder: '$(System.DefaultWorkingDirectory)/target'
+              Contents: '*.jar'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Artifact'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+  - stage: Deploy
+    displayName: Deploy Stage
+    dependsOn: Package
+    condition: succeeded()
+    jobs:
+      - job: DeployToEnvironment
+        displayName: Deploy to Environment
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Download Artifact'
+            inputs:
+              artifact: 'drop'
+              path: '$(System.ArtifactsDirectory)'
+
+          - task: AzureWebApp@1
+            displayName: 'Deploy to Azure Web App'
+            inputs:
+              azureSubscription: 'your_azure_service_connection' # Replace with your Azure subscription service connection name
+              appType: 'webAppLinux'
+              appName: 'your_app_name' # Replace with your Web App name
+              package: '$(System.ArtifactsDirectory)/**/*.jar'
+              runtimeStack: 'JAVA|11'
+              startupCommand: 'java -jar *.jar'
 ```
