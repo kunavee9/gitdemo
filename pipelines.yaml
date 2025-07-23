@@ -1,0 +1,70 @@
+```yaml
+# tech_stack_detector.py
+stages:
+  - stage: Build
+    jobs:
+      - job: MavenBuild
+        displayName: 'Maven Build and Package'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Maven@3
+            displayName: 'Maven Build'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean install'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              codeCoverageToolOption: 'JaCoCo'
+              codeCoverageJacocoReportDirectory: '$(System.DefaultWorkingDirectory)/jacoco'
+              codeCoverageFailIfEmpty: false
+
+  - stage: Test
+    dependsOn: Build
+    jobs:
+      - job: SonarQubeAnalysis
+        displayName: 'SonarQube Analysis'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: SonarQubePrepare@5
+            displayName: 'Prepare analysis on SonarQube'
+            inputs:
+              SonarQube: 'your_sonarqube_service_connection'  # Replace with your SonarQube service connection name
+              scannerMode: 'Maven'
+              projectKey: 'your_project_key' # Replace with your SonarQube project key
+              projectName: 'your_project_name' # Replace with your SonarQube project name
+
+          - task: Maven@3
+            displayName: 'Maven analysis'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'verify sonar:sonar'
+
+          - task: SonarQubePublish@5
+            displayName: 'Publish results on SonarQube'
+            inputs:
+              pollingTimeoutSec: '300'
+
+  - stage: Publish
+    dependsOn: Test
+    jobs:
+      - job: PublishArtifacts
+        displayName: 'Publish Artifacts'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: CopyFiles@2
+            displayName: 'Copy Files to Artifact Staging Directory'
+            inputs:
+              SourceFolder: '$(System.DefaultWorkingDirectory)'
+              Contents: 'target/*.jar' # Adjust based on your packaging
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Artifacts'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+```
