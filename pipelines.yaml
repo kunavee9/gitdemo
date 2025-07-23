@@ -1,73 +1,82 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline definition for a Java (Maven) project.
-# This pipeline automates building, testing, and deploying a Java application.
-
 stages:
-  - name: Build
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0 # Fetches all history for better tag/release detection
-      - name: Set up JDK
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17' # or your specific Java version
-          distribution: 'temurin' # or another distribution like 'adopt' or 'oracle'
-      - name: Cache Maven packages
-        uses: actions/cache@v3
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-maven-
-      - name: Build with Maven
-        run: mvn clean install -DskipTests # Build the project, skipping tests initially
+  - stage: Build
+    jobs:
+      - job: MavenBuild
+        displayName: 'Maven Build and Test'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Maven@3
+            displayName: 'Maven Build'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean install'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              codeCoverageToolOption: 'Cobertura'
+              codeCoverageCoberturaReportDirectory: '$(System.DefaultWorkingDirectory)/target/site/cobertura'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.8'
+              mavenVersionOption: 'Default'
 
-  - name: Test
-    needs: Build
-    steps:
-      - name: Run Tests
-        run: mvn test # Run the tests
+  - stage: SonarQubeAnalysis
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: Analyze
+        displayName: 'SonarQube Analysis'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: SonarQubePrepare@5
+            displayName: 'Prepare SonarQube analysis'
+            inputs:
+              SonarQube: 'your_sonarqube_service_connection'  # Replace with your SonarQube service connection name
+              scannerMode: 'Maven'
+              projectKey: 'your_project_key'             # Replace with your SonarQube project key
+              projectName: 'Your Project Name'          # Replace with your SonarQube project name
 
-  - name: SonarQube Analysis
-    needs: Test
-    if: github.event_name == 'push' # Only run on push events
-    env:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }} # Ensure you have this secret defined
-      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }} # Ensure you have this secret defined
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-      - name: Set up JDK
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17' # Match the Java version used for building
-          distribution: 'temurin'
-      - name: Cache Maven packages
-        uses: actions/cache@v3
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-maven-
-      - name: SonarQube Scan
-        run: mvn sonar:sonar -Dsonar.projectKey=${{ github.repository }} -Dsonar.organization=your-sonarcloud-org # Replace with your SonarCloud organization
+          - task: Maven@3
+            displayName: 'Run SonarQube analysis'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean install sonar:sonar'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.8'
+              mavenVersionOption: 'Default'
 
-  - name: Package
-    needs: SonarQube Analysis
-    steps:
-      - name: Package application
-        run: mvn package # Package the application (e.g., create a JAR or WAR file)
+          - task: SonarQubePublish@5
+            displayName: 'Publish Quality Gate Result'
+            inputs:
+              pollingTimeoutSec: '300'
 
-  - name: Deploy
-    needs: Package
-    if: github.ref == 'refs/heads/main' # Only deploy from the main branch
-    steps:
-      - name: Deploy to Production
-        # Replace with your deployment steps (e.g., deploy to a cloud provider)
-        run: echo "Deploying to production..."
+  - stage: Publish
+    dependsOn: SonarQubeAnalysis
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))  # Only publish from the main branch
+    jobs:
+      - job: PublishArtifacts
+        displayName: 'Publish Artifacts'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: CopyFiles@2
+            displayName: 'Copy JAR file'
+            inputs:
+              SourceFolder: '$(System.DefaultWorkingDirectory)/target'
+              Contents: '*.jar'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Artifact'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+variables:
+  - name: maven.options
+    value: '-DskipTests'  # Example variable. Can be removed if not needed.
+
 ```
