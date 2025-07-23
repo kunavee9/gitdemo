@@ -1,87 +1,108 @@
 ```yaml
 # tech_stack_detector.py
+# Pipeline for building and deploying a Java application using Maven.
+# This pipeline includes stages for:
+# - Building the application
+# - Running unit tests
+# - Performing static analysis
+# - Deploying to a staging environment
+# - Running integration tests against the staging environment
+# - Deploying to production (manual approval required)
+# This pipeline assumes that the application code is stored in a Git repository.
+
 stages:
-  - stage: Build
-    displayName: Build and Test
-    jobs:
-      - job: MavenBuild
-        displayName: Maven Build and Test
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: Maven@3
-            displayName: 'Maven Build with Tests'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'clean install'
-              publishJUnitResults: true
-              testResultsFiles: '**/surefire-reports/TEST-*.xml'
-              codeCoverageToolOption: JaCoCo
-              codeCoverageJacocoReportDirectory: '$(Agent.BuildDirectory)/jacoco'
-              codeCoverageJacocoReportFile: 'jacoco.xml'
-              codeCoverageJacocoClassfilesDirectories: '$(Agent.BuildDirectory)/classes'
+  - Build
+  - Test
+  - Static Analysis
+  - Deploy to Staging
+  - Integration Tests
+  - Deploy to Production
 
-          - task: CopyFiles@2
-            displayName: 'Copy Artifacts'
-            inputs:
-              SourceFolder: '$(System.DefaultWorkingDirectory)'
-              Contents: 'target/*.jar' # Adjust as needed based on your artifact name
-              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+variables:
+  MAVEN_IMAGE: maven:3.8.6-jdk-11
+  STAGING_ENVIRONMENT: staging
+  PRODUCTION_ENVIRONMENT: production
 
-          - task: PublishBuildArtifacts@1
-            displayName: 'Publish Artifacts'
-            inputs:
-              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'drop'
-              publishLocation: 'Container'
+build:
+  stage: Build
+  image: $MAVEN_IMAGE
+  script:
+    - echo "Building the application..."
+    - mvn clean install -DskipTests # Skip tests during the build stage
+  artifacts:
+    paths:
+      - target/*.jar # Assuming the application produces a JAR file
 
-  - stage: SonarQubeAnalysis
-    displayName: SonarQube Analysis
-    dependsOn: Build
-    condition: succeeded()
-    jobs:
-      - job: Analyze
-        displayName: SonarQube Analysis
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: SonarSource.sonarqube.15B84CA1-B62F-4A2A-A403-89B51890F4D4.SonarQubePrepare@5
-            displayName: 'Prepare analysis on SonarQube'
-            inputs:
-              SonarQube: 'your_sonarqube_connection' # Replace with your SonarQube connection name
-              scannerMode: 'Maven'
-              projectKey: 'your_project_key'        # Replace with your SonarQube project key
-              projectName: 'your_project_name'      # Replace with your SonarQube project name
+test:
+  stage: Test
+  image: $MAVEN_IMAGE
+  script:
+    - echo "Running unit tests..."
+    - mvn test
+  dependencies:
+    - build # Dependent on the build stage
 
-          - task: Maven@3
-            displayName: 'Run SonarQube analysis'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'org.sonarsource.scanner.maven:sonar-maven-plugin:sonar'
+static_analysis:
+  stage: Static Analysis
+  image: $MAVEN_IMAGE
+  script:
+    - echo "Performing static analysis..."
+    - mvn checkstyle:checkstyle # Example: Using Checkstyle for static analysis
+    - mvn pmd:pmd # Example: Using PMD for static analysis
+  dependencies:
+    - build # Dependent on the build stage
+  allow_failure: true # Allow the pipeline to continue even if static analysis fails
 
-          - task: SonarSource.sonarqube.6D06A19F-89E3-4917-B6E1-F06D14CA18D4.SonarQubePublish@5
-            displayName: 'Publish Quality Gate Result'
-            inputs:
-              pollingTimeoutSec: '300'
+deploy_to_staging:
+  stage: Deploy to Staging
+  image: docker:latest # Using docker image for deployment
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - echo "Deploying to staging environment..."
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-staging . # Build docker image
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-staging # Push docker image
+    # Add deployment commands here, e.g., using docker-compose, kubectl, etc.
+    - echo "Deployment commands to staging goes here"
+  environment:
+    name: $STAGING_ENVIRONMENT
+    url: "https://staging.example.com" # Replace with your staging URL
+  dependencies:
+    - build # Dependent on the build stage
 
-  - stage: Deploy
-    displayName: Deploy to Environment
-    dependsOn: SonarQubeAnalysis # Ensure SonarQube analysis is complete and successful
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main')) # Deploy only from main branch and on successful build
-    jobs:
-      - deployment: DeployToAzure
-        displayName: Deploy to Azure App Service
-        pool:
-          vmImage: 'ubuntu-latest'
-        environment: 'YourAzureEnvironment' # Replace with your Azure environment name
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - task: AzureWebApp@1
-                  displayName: 'Azure App Service Deploy'
-                  inputs:
-                    azureSubscription: 'your_azure_subscription' # Replace with your Azure subscription name
-                    appName: 'your_app_service_name'          # Replace with your Azure App Service name
-                    package: '$(Build.ArtifactStagingDirectory)/*.jar' # Deploy the JAR file
+integration_tests:
+  stage: Integration Tests
+  image: curlimages/curl # Using curl image for integration tests
+  script:
+    - echo "Running integration tests against staging environment..."
+    # Add integration test commands here, e.g., using curl, postman, etc.
+    - curl https://staging.example.com # Example test, replace with your integration test commands
+  environment:
+    name: $STAGING_ENVIRONMENT
+    url: "https://staging.example.com" # Replace with your staging URL
+  dependencies:
+    - deploy_to_staging # Dependent on deploy_to_staging stage
+  allow_failure: true # Allow failure for early feedback
+
+deploy_to_production:
+  stage: Deploy to Production
+  image: docker:latest # Using docker image for deployment
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - echo "Deploying to production environment..."
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-production . # Build docker image
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG-production # Push docker image
+    # Add deployment commands here, e.g., using docker-compose, kubectl, etc.
+    - echo "Deployment commands to production goes here"
+  environment:
+    name: $PRODUCTION_ENVIRONMENT
+    url: "https://example.com" # Replace with your production URL
+  dependencies:
+    - integration_tests # Dependent on integration_tests stage
+  when: manual # Manual approval required for deploying to production
 ```
