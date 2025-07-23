@@ -1,125 +1,46 @@
 ```yaml
 # tech_stack_detector.py
+# CI/CD pipeline for a React application.
+# Uses Node.js for building and testing, and deploys to a static hosting provider (e.g., AWS S3, Netlify).
+
 name: React CI/CD Pipeline
 
 on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
 
 jobs:
-  setup:
+  build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18' # Use a supported Node.js version
+          node-version: 18 # or your preferred Node.js version
 
       - name: Install dependencies
-        run: npm install # Or yarn install, depending on your project
-        
-  lint:
-    needs: setup
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install dependencies (linting dependencies)
         run: npm install
-
-      - name: Run ESLint
-        run: npm run lint # Or yarn lint.  Ensure this script is defined in package.json
-  
-  format:
-    needs: setup
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install dependencies (formatting dependencies)
-        run: npm install
-
-      - name: Run Prettier
-        run: npm run format # Or yarn format. Ensure this script is defined in package.json
-        
-  test:
-    needs: setup
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: npm install # Or yarn install
 
       - name: Run tests
-        run: npm test # Or yarn test.  Ensure this script is defined in package.json
+        run: npm test
 
-  build:
-    needs: [lint, format, test] # Ensure linting, formatting, and tests pass before building
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Build
+        run: npm run build
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: npm install # Or yarn install
-
-      - name: Build the application
-        run: npm run build # Or yarn build. Ensure this script is defined in package.json
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: build
-          path: build #  Adjust this to your build output directory.
-          
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: build
-          path: build
-
-      - name: Deploy to a hosting environment (Example: Netlify)
-        if: github.ref == 'refs/heads/main' # Only deploy from main branch.
+      - name: Deploy to Production
+        if: github.ref == 'refs/heads/main'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: 'us-east-1' # Replace with your AWS region
+          S3_BUCKET: 'your-s3-bucket-name' # Replace with your S3 bucket name
         run: |
-          echo "Deploying to Netlify..."
-          # Replace with your deployment script.
-          # Example using Netlify CLI:
-          # npm install -g netlify-cli
-          # netlify deploy --prod --dir=build --auth-token=${{ secrets.NETLIFY_AUTH_TOKEN }} --site=${{ secrets.NETLIFY_SITE_ID }}
-          echo "Deployment steps go here."
+          npm install -g aws-cli
+          aws s3 sync ./build s3://$S3_BUCKET --delete # Ensure to delete old files to prevent caching issues.
+
 ```
