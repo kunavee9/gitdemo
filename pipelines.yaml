@@ -1,60 +1,90 @@
 ```yaml
 # tech_stack_detector.py
-name: React CI/CD Pipeline
+# Pipeline for React application deployment using best practices.
+# Includes linting, testing, building, and deploying to a staging environment.
 
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+stages:
+  - lint
+  - test
+  - build
+  - deploy_staging
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+lint:
+  stage: lint
+  image: node:latest
+  script:
+    - echo "Linting code..."
+    - npm install --global eslint
+    - eslint src/**/*.js
+  tags:
+    - docker
+  rules:
+    - changes:
+        - src/**/*
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+test:
+  stage: test
+  image: node:latest
+  script:
+    - echo "Running tests..."
+    - npm install
+    - npm test -- --coverage
+  coverage: '/All files[^|]*\|[^%]*\s+([\d\.]+)/'
+  artifacts:
+    reports:
+      junit: coverage/junit.xml
+    paths:
+      - coverage/
+  tags:
+    - docker
+  rules:
+    - changes:
+        - src/**/*
+        - test/**/*
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18  # Or your preferred Node.js version
+build:
+  stage: build
+  image: node:latest
+  script:
+    - echo "Building application..."
+    - npm install
+    - npm run build
+  artifacts:
+    paths:
+      - build/
+  tags:
+    - docker
+  rules:
+    - changes:
+        - src/**/*
+        - public/**/*
+        - package.json
+        - webpack.config.js
+  dependencies:
+    - test
 
-      - name: Install Dependencies
-        run: npm install # Or yarn install if using Yarn
-
-      - name: Run Tests
-        run: npm test # Or yarn test
-
-      - name: Build Production
-        run: npm run build # Or yarn build.  Assumes "build" script creates a production-ready artifact
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: react-app
-          path: build # Or your build output directory
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' # Only deploy from main branch
-
-    steps:
-      - name: Download Artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: react-app
-          path: build
-
-      - name: Deploy to Production # Replace with your deployment strategy
-        run: |
-          echo "Deploying to production..."
-          # Add your deployment commands here
-          # Example:
-          # scp -r build/* user@yourserver.com:/var/www/your-app
-          echo "Deployment complete."
+deploy_staging:
+  stage: deploy_staging
+  image: docker:latest
+  before_script:
+    - echo "Logging into Docker Hub..."
+    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+  script:
+    - echo "Deploying to staging environment..."
+    - docker pull my-react-app:latest || true #Ignore error if image does not exist
+    - docker build -t my-react-app:staging .
+    - docker tag my-react-app:staging my-react-app:latest
+    - docker push my-react-app:latest
+    #Add the instructions to deploy to the staging enviroment.
+    - echo "Deployment complete."
+  tags:
+    - docker
+  environment:
+    name: staging
+    url: https://staging.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+  dependencies:
+    - build
 ```
