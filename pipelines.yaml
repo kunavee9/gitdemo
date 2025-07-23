@@ -1,108 +1,90 @@
 ```yaml
 # tech_stack_detector.py
+# Pipeline for building and deploying a Java application using Maven.
+# Follows industry best practices for Java/Maven projects.
+# Includes stages for linting, unit testing, building, artifact storage, and deployment.
+
 stages:
-  - stage: Build
-    displayName: Build Stage
-    jobs:
-      - job: MavenBuild
-        displayName: Maven Build and Test
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: Maven@3
-            displayName: 'Maven Build'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'clean install'
-              publishJUnitResults: true
-              testResultsFiles: '**/surefire-reports/TEST-*.xml'
-              codeCoverageToolOption: 'JaCoCo'
-              codeCoverageJacocoReportFile: '**/jacoco-report/jacoco.xml'
-              codeCoverageFailIfEmpty: false
+  - Lint
+  - Test
+  - Build
+  - Package
+  - Deploy
 
-  - stage: SonarQubeAnalysis
-    displayName: SonarQube Analysis
-    dependsOn: Build
-    condition: succeeded()
-    jobs:
-      - job: SonarQube
-        displayName: 'SonarQube Analysis'
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: SonarQubePrepare@5
-            displayName: 'Prepare SonarQube analysis'
-            inputs:
-              SonarQube: 'your_sonarqube_service_connection'  # Replace with your SonarQube service connection name
-              scannerMode: 'Maven'
-              projectKey: 'your_project_key' # Replace with your SonarQube project key
-              projectName: 'your_project_name' # Replace with your SonarQube project name
+variables:
+  MAVEN_IMAGE: maven:3.8.6-jdk-11
+  MAVEN_CLI_OPTS: "-Dmaven.repo.local=.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn"
+  PROJECT_NAME: my-java-app # Replace with your project name
 
-          - task: Maven@3
-            displayName: 'Run SonarQube analysis'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'org.sonarsource.scanner.maven:sonar-maven-plugin:sonar'
+cache:
+  paths:
+    - .m2/repository
+    - target/
 
-          - task: SonarQubePublish@5
-            displayName: 'Publish SonarQube quality gate result'
-            inputs:
-              pollingTimeoutSec: '300'
+lint:
+  image: ${MAVEN_IMAGE}
+  stage: Lint
+  script:
+    - echo "Running code linting..."
+    - mvn spotless:check
+  tags:
+    - docker
 
-  - stage: Package
-    displayName: Package Stage
-    dependsOn: SonarQubeAnalysis
-    condition: succeeded()
-    jobs:
-      - job: PackageArtifact
-        displayName: Package Artifact
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: Maven@3
-            displayName: 'Maven Package'
-            inputs:
-              mavenPomFile: 'pom.xml'
-              goals: 'package'
-              publishJUnitResults: false
+test:
+  image: ${MAVEN_IMAGE}
+  stage: Test
+  script:
+    - echo "Running unit tests..."
+    - mvn ${MAVEN_CLI_OPTS} test
+  tags:
+    - docker
+  coverage: '/Total.*?([0-9]{1,3})%/'
+  artifacts:
+    reports:
+      junit: target/surefire-reports/TEST-*.xml
 
-          - task: CopyFiles@2
-            displayName: 'Copy Files to Artifact Staging Directory'
-            inputs:
-              SourceFolder: '$(System.DefaultWorkingDirectory)/target'
-              Contents: '*.jar'
-              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+build:
+  image: ${MAVEN_IMAGE}
+  stage: Build
+  script:
+    - echo "Building the application..."
+    - mvn ${MAVEN_CLI_OPTS} compile
+  tags:
+    - docker
+  artifacts:
+    paths:
+      - target/*.jar
 
-          - task: PublishBuildArtifacts@1
-            displayName: 'Publish Artifact'
-            inputs:
-              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'drop'
-              publishLocation: 'Container'
+package:
+  image: ${MAVEN_IMAGE}
+  stage: Package
+  script:
+    - echo "Packaging the application..."
+    - mvn ${MAVEN_CLI_OPTS} package -DskipTests
+  tags:
+    - docker
+  artifacts:
+    paths:
+      - target/*.jar # Store the JAR file as an artifact
 
-  - stage: Deploy
-    displayName: Deploy Stage
-    dependsOn: Package
-    condition: succeeded()
-    jobs:
-      - job: DeployToEnvironment
-        displayName: Deploy to Environment
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-          - task: DownloadPipelineArtifact@2
-            displayName: 'Download Artifact'
-            inputs:
-              artifact: 'drop'
-              path: '$(System.ArtifactsDirectory)'
-
-          - task: AzureWebApp@1
-            displayName: 'Deploy to Azure Web App'
-            inputs:
-              azureSubscription: 'your_azure_service_connection' # Replace with your Azure subscription service connection name
-              appType: 'webAppLinux'
-              appName: 'your_app_name' # Replace with your Web App name
-              package: '$(System.ArtifactsDirectory)/**/*.jar'
-              runtimeStack: 'JAVA|11'
-              startupCommand: 'java -jar *.jar'
+deploy:
+  image: alpine/k8s:1.26.3
+  stage: Deploy
+  variables:
+    KUBE_NAMESPACE: default # Replace with your Kubernetes namespace
+    DEPLOYMENT_FILE: deployment.yaml # Replace with your deployment file
+    SERVICE_FILE: service.yaml # Replace with your service file
+  script:
+    - echo "Deploying to Kubernetes..."
+    - apk add --no-cache curl
+    - kubectl apply -n ${KUBE_NAMESPACE} -f ${DEPLOYMENT_FILE}
+    - kubectl apply -n ${KUBE_NAMESPACE} -f ${SERVICE_FILE}
+    - echo "Deployment complete!"
+  environment:
+    name: production
+    url: http://your-application-url.com # Replace with your application URL
+  tags:
+    - docker
+  only:
+    - main # Only deploy from the main branch (or your chosen production branch)
 ```
