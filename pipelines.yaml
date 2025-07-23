@@ -1,74 +1,102 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for a Java project using Maven for build automation.
-# Includes stages for build, test, static analysis, and deployment.
-# Assumes Maven `pom.xml` is in the root of the repository.
-
 stages:
-  - Build
-  - Test
-  - Static Analysis
-  - Deploy
+  - stage: Build
+    jobs:
+      - job: MavenBuild
+        displayName: 'Maven Build and Test'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Maven@3
+            displayName: 'Maven Build'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean install'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.8' # Or appropriate JDK version
+              mavenAuthenticateFeed: false
+              mavenOpts: '-Dmaven.repo.local=$(Agent.BuildDirectory)/.m2/repository'
+
+  - stage: SonarQubeAnalysis
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: Analyze
+        displayName: 'SonarQube Analysis'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: SonarSource.sonarqube.15B84CA1-B62F-4A2A-A403-89B77A063157.SonarQubePrepare@4
+            displayName: 'Prepare analysis on SonarQube'
+            inputs:
+              SonarQube: 'your_sonarqube_connection' # Replace with your SonarQube service connection
+              scannerMode: 'Maven'
+              projectKey: 'your_project_key'  # Replace with your SonarQube project key
+              projectName: 'Your Project Name' # Replace with your SonarQube project name
+
+          - task: Maven@3
+            displayName: 'Run SonarQube analysis'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'org.sonarsource.scanner.maven:sonar-maven-plugin:sonar'
+              mavenOpts: '-Dsonar.login=$(sonarQubeToken)' # Ensure this variable is defined in your pipeline variables
+              publishJUnitResults: false
+
+          - task: SonarSource.sonarqube.291ed09f-5c64-462f-994e-51593e6225b1.SonarQubePublish@5
+            displayName: 'Publish Quality Gate Result'
+            inputs:
+              pollingTimeoutSec: '300'
+
+  - stage: Package
+    dependsOn: SonarQubeAnalysis
+    condition: succeeded()
+    jobs:
+      - job: PackageArtifact
+        displayName: 'Package Artifact'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: CopyFiles@2
+            displayName: 'Copy Files to Artifact Staging Directory'
+            inputs:
+              SourceFolder: '$(System.DefaultWorkingDirectory)'
+              Contents: 'target/*.jar' # Adjust based on your artifact type
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Artifact'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+  - stage: Deploy
+    dependsOn: Package
+    condition: succeeded()
+    jobs:
+      - job: DeployToEnvironment
+        displayName: 'Deploy to Environment'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'YourEnvironmentName' # Replace with your environment name
+        steps:
+          # Add deployment steps here.  Example: Azure App Service Deploy
+          #   - task: AzureWebApp@1
+          #     displayName: 'Azure App Service Deploy: your-app-name'
+          #     inputs:
+          #       azureSubscription: 'your-azure-subscription'  # Replace with your Azure subscription service connection
+          #       appName: 'your-app-name' # Replace with your Azure App Service name
+          #       package: '$(Build.ArtifactStagingDirectory)/**/*.jar'
+          - script: |
+              echo "Placeholder for deployment steps."
+              echo "Artifacts are available in $(Build.ArtifactStagingDirectory)"
+            displayName: 'Deployment Script (Replace with actual deployment logic)'
 
 variables:
-  MAVEN_IMAGE: maven:3.8.6-jdk-11
+  - name: sonarQubeToken
+    value: $(sonarQubeToken) # Define this variable in pipeline settings with secret scope
 
-build:
-  stage: Build
-  image: $MAVEN_IMAGE
-  script:
-    - echo "Starting Maven build..."
-    - mvn clean install -DskipTests # Skip tests during initial build phase. Can be removed to run tests during build.
-  artifacts:
-    paths:
-      - target/*.jar # Assuming the output is a JAR file; adjust if different.
-    expire_in: 1 day
-
-test:
-  stage: Test
-  image: $MAVEN_IMAGE
-  script:
-    - echo "Running Maven tests..."
-    - mvn test # Execute tests.  If tests were already executed during the build stage, this could be adjusted (e.g., using `mvn verify`).
-  dependencies:
-    - build
-  coverage: '/Total.*?([0-9]{1,3})%/'
-  artifacts:
-    reports:
-      junit: target/surefire-reports/TEST-*.xml # Location of JUnit test reports. Adjust as needed.
-    expire_in: 1 day
-
-static_analysis:
-  stage: Static Analysis
-  image: $MAVEN_IMAGE
-  script:
-    - echo "Performing static analysis with SpotBugs..."
-    - mvn spotbugs:check # Runs SpotBugs static analysis. Requires SpotBugs plugin configured in pom.xml
-    - echo "Performing static analysis with PMD..."
-    - mvn pmd:check      # Runs PMD static analysis.     Requires PMD plugin configured in pom.xml
-  dependencies:
-    - build #Depends on build stage because the code should have been compiled first
-  allow_failure: true # Allow the pipeline to continue even if static analysis fails.
-
-deploy:
-  stage: Deploy
-  image: docker:latest
-  before_script:
-    - apk add --no-cache curl # Install curl inside the docker image used by the runner
-  script:
-    - echo "Deploying application..."
-    - echo "Deployment logic goes here.  Example: Deploying a Docker image"
-    - echo "Consider using environment variables for sensitive information (e.g., deployment keys)."
-    # Example Docker login and push (replace with your actual deployment logic)
-    # - docker login -u "$DOCKER_REGISTRY_USER" -p "$DOCKER_REGISTRY_PASSWORD" "$DOCKER_REGISTRY_URL"
-    # - docker build -t "$DOCKER_REGISTRY_URL/$IMAGE_NAME:$CI_COMMIT_SHA" .
-    # - docker push "$DOCKER_REGISTRY_URL/$IMAGE_NAME:$CI_COMMIT_SHA"
-  dependencies:
-    - build
-  environment:
-    name: production
-    url: https://example.com # Replace with your actual application URL
-  only:
-    - main # Deploy only from the main branch
-  when: manual #Require a manual start to be deployed
 ```
