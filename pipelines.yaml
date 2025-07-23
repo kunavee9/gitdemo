@@ -1,63 +1,80 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for building and deploying a Java application using Maven.
-# Includes stages for checkout, build, test, and potentially deploy.
+# Pipeline for building, testing, and deploying a Java application using Maven.
+# Follows industry best practices for CI/CD pipelines.
+# Uses Maven for dependency management and build automation.
+# Includes stages for build, test, code analysis, and deployment.
 
 stages:
-  - checkout
-  - build
-  - test
-  - deploy
+  - Build
+  - Test
+  - Code Analysis
+  - Deploy
 
-checkout:
-  stage: checkout
-  image: alpine/git:latest
-  script:
-    - echo "Checking out code..."
-    - git clone $CI_REPOSITORY_URL .
-    - echo "Checkout complete."
-  artifacts:
-    paths:
-      - .
-    expire_in: 1 hour
+variables:
+  MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version"
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+
+cache:
+  paths:
+    - .m2/repository/
+    - target/
 
 build:
-  stage: build
-  image: maven:3.8.7-openjdk-17 # Use a specific Maven and Java version
+  stage: Build
+  image: maven:3.8.6-jdk-11
   script:
     - echo "Building the application..."
-    - mvn clean install -DskipTests # Clean, compile, package, and install. Skip tests during build.
-    - echo "Build complete."
+    - mvn $MAVEN_CLI_OPTS clean install -DskipTests
   artifacts:
     paths:
-      - target/*.jar # Assuming a JAR file is produced
-    expire_in: 1 day
+      - target/*.jar
+    expire_in: 1 week
 
 test:
-  stage: test
-  image: maven:3.8.7-openjdk-17
+  stage: Test
+  image: maven:3.8.6-jdk-11
   script:
-    - echo "Running tests..."
-    - mvn test # Execute the JUnit tests
-    - echo "Tests complete."
+    - echo "Running unit tests..."
+    - mvn $MAVEN_CLI_OPTS test
+  coverage: '/Total.*?([0-9]{1,3})%/' # Adjust regex based on your coverage tool's output
   artifacts:
     reports:
-      junit: target/surefire-reports/TEST-*.xml # Assuming standard Surefire reports
+      junit: target/surefire-reports/TEST-*.xml  # Adjust path if necessary
+    expire_in: 1 week
   dependencies:
-    - build # Ensure build stage is complete before testing
-  allow_failure: true # Allow failure if tests are flaky.  Consider removing if test stability is improved
+    - build
+
+code_analysis:
+  stage: Code Analysis
+  image: maven:3.8.6-jdk-11
+  script:
+    - echo "Performing code analysis with SonarQube..."
+    - mvn $MAVEN_CLI_OPTS sonar:sonar -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN
+  allow_failure: true # Allows the pipeline to continue even if code analysis fails
+  dependencies:
+    - build
 
 deploy:
-  stage: deploy
-  image: alpine/kubectl:latest # Or your preferred deployment image
+  stage: Deploy
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
   script:
-    - echo "Deploying the application..."
-    - echo "Dummy Deployment Command" # Replace with actual deployment commands
-    - echo "Deployment complete."
-  dependencies:
-    - test # Ensure tests have passed (or at least been attempted)
+    - echo "Building Docker image..."
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - echo "Deploying to environment..."
+    # Add deployment script here, e.g., using kubectl, docker-compose, etc.
+    # Example:
+    # - kubectl apply -f deployment.yaml
+  environment:
+    name: production
+    url: https://example.com  # Replace with your application's URL
   only:
-    - main # Deploy only on the main branch.  Adjust as needed (tags, etc.)
-  when: manual # Require manual triggering of the deploy stage for safety
-
+    - main # Trigger deployment only on the main branch
+  dependencies:
+    - build
 ```
