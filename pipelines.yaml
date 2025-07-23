@@ -1,78 +1,83 @@
 ```yaml
 # tech_stack_detector.py
 # Pipeline configuration for Java (Maven) project
+# Follows industry best practices for CI/CD
 
 stages:
   - name: Build
+    # Build stage: Compile, test, and package the application
     steps:
-      - step:
-          name: Checkout Code
-          type: git-checkout
-          repo: self
-          fail_on_error: true
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
 
-      - step:
-          name: Set up JDK
-          image: maven:3.8.6-openjdk-17
-          commands:
-            - java -version
-            - mvn -version
-          fail_on_error: true
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
 
-      - step:
-          name: Maven Build
-          image: maven:3.8.6-openjdk-17
-          commands:
-            - mvn clean install -DskipTests
-          fail_on_error: true
-
-          artifacts:
-            - target/*.jar # Adjust based on your project's output
+      - name: Maven Build
+        # Runs the maven build using the pom.xml file.
+        run: mvn -B package --file pom.xml
 
   - name: Test
+    # Test stage: Run unit and integration tests
+    needs: Build
     steps:
-      - step:
-          name: Run Tests
-          image: maven:3.8.6-openjdk-17
-          commands:
-            - mvn test
-          fail_on_error: true
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
 
-  - name: SonarQube Analysis
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Maven Test
+        run: mvn -B test --file pom.xml
+
+  - name: Package
+    # Package stage: Create deployable artifacts
+    needs: Test
     steps:
-      - step:
-          name: SonarQube Scan
-          image: maven:3.8.6-openjdk-17
-          script:
-            - mvn sonar:sonar -Dsonar.host.url=$SONARQUBE_HOST_URL -Dsonar.login=$SONARQUBE_TOKEN
-          fail_on_error: true
-          condition: ${BITBUCKET_BRANCH} == 'main' # Or your main branch name
-          variables:
-            SONARQUBE_HOST_URL: ${SONARQUBE_HOST_URL} #Replace with your SonarQube URL
-            SONARQUBE_TOKEN: ${SONARQUBE_TOKEN}   # Replace with your SonarQube token
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
 
-  - name: Deploy
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Package Artifacts
+        run: mvn -B package --file pom.xml
+        # Package the application into a deployable artifact (e.g., JAR, WAR)
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: package
+          path: target/*.jar # Customize the path based on your packaging
+
+  - name: Release
+    # Release stage: Publish the artifact to a repository
+    needs: Package
     steps:
-      - step:
-          name: Deploy to Staging
-          image: alpine/curl
-          script:
-            - echo "Deploying to staging environment..."
-            - curl -X POST -H "Content-Type: application/json" -d '{"deployment_env": "staging"}' $DEPLOYMENT_ENDPOINT
-          condition: ${BITBUCKET_BRANCH} == 'staging' # deploy when branch name matches staging
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
 
-      - step:
-          name: Deploy to Production
-          image: alpine/curl
-          script:
-            - echo "Deploying to production environment..."
-            - curl -X POST -H "Content-Type: application/json" -d '{"deployment_env": "production"}' $DEPLOYMENT_ENDPOINT
-          condition: ${BITBUCKET_TAG} # deploy when tag has been created
-          trigger: manual
-          variables:
-            DEPLOYMENT_ENDPOINT: ${DEPLOYMENT_ENDPOINT} # Your deployment endpoint
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
 
-definitions:
-  caches:
-    maven: ~/.m2/repository
+      - name: Release
+        run: mvn -B deploy --file pom.xml # Execute Maven deploy goal to publish the artifact
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use Github token to allow publishing
 ```
