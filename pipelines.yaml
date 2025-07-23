@@ -1,62 +1,59 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for building, testing, and deploying a Java application using Maven.
-# This pipeline assumes a standard Maven project structure.
-
+# Pipeline for Java (Maven) projects
 stages:
   - name: Build
     steps:
       - step:
-          name: Build with Maven
-          image: maven:3.8.6-openjdk-17 # Use a specific Maven and JDK version for consistency
-          caches:
-            - maven  # Cache Maven dependencies for faster builds
-          script:
-            - echo "Starting Maven build..."
-            - mvn clean install -DskipTests # Clean, compile, and package the application, skipping tests during build
-          artifacts:
-            - target/* # Capture the built JAR/WAR file
+          name: Checkout
+          type: git-checkout
+          repo: ${{repo.FullName}}
+          revision: ${{revision}}
+
+      - step:
+          name: Set up JDK
+          image: maven:3.8.6-openjdk-17
+          commands:
+            - echo "Installing JDK 17"
+
+      - step:
+          name: Maven Build
+          image: maven:3.8.6-openjdk-17
+          commands:
+            - echo "Starting Maven build"
+            - mvn clean install -DskipTests # Build the project
 
   - name: Test
     steps:
       - step:
-          name: Run Unit Tests
+          name: Run Tests
           image: maven:3.8.6-openjdk-17
-          caches:
-            - maven
-          script:
-            - echo "Running unit tests..."
-            - mvn test # Execute unit tests
-          # Add test reporting, if applicable.  For example:
-          # reports:
-          #   junit: target/surefire-reports/*.xml
+          commands:
+            - echo "Running tests"
+            - mvn test # Execute the tests
+          when:
+            status: success # Only run if the Build stage was successful
 
-  - name: SonarQube Analysis (Optional)
+  - name: Package
     steps:
       - step:
-          name: Run SonarQube Analysis
+          name: Package Artifact
           image: maven:3.8.6-openjdk-17
-          caches:
-            - maven
-          script:
-            - echo "Starting SonarQube analysis..."
-            # Configure SonarQube properties as needed
-            - mvn sonar:sonar -Dsonar.host.url=$SONARQUBE_HOST_URL -Dsonar.login=$SONARQUBE_TOKEN
-          # Requires environment variables: SONARQUBE_HOST_URL, SONARQUBE_TOKEN
+          commands:
+            - echo "Packaging artifact"
+            - mvn package # Package the application
+          when:
+            status: success # Only run if the Test stage was successful
 
-  - name: Deploy (Optional)
+  - name: Deploy
     steps:
       - step:
-          name: Deploy to Staging
+          name: Deploy to Repository
           image: maven:3.8.6-openjdk-17
-          script:
-            - echo "Deploying to staging..."
-            # Add deployment logic here (e.g., using scp, a deployment tool, etc.)
-            # Requires configuring appropriate credentials and deployment scripts
-          # You'll need to adapt this step to your specific deployment environment.
-
-          # Example deployment to a remote server using scp (replace with your actual setup):
-          # - scp target/*.jar user@staging_server:/path/to/deployment/directory/
-          # Remember to configure SSH keys or passwordless login for the 'scp' command.
-
+          commands:
+            - echo "Deploying artifact"
+            # Add deployment commands here (e.g., deploy to Maven Central, deploy to a custom repository)
+            - echo "Deployment commands go here" #Placeholder
+          when:
+            status: success # Only run if the Package stage was successful
 ```
