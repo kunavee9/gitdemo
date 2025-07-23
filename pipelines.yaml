@@ -1,61 +1,87 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for building and testing a Java project with Maven.
-# This pipeline includes stages for checkout, build, test, and optionally deploy.
-
 stages:
-  - checkout
-  - build
-  - test
-  - deploy
+  - stage: Build
+    displayName: Build and Test
+    jobs:
+      - job: MavenBuild
+        displayName: Maven Build and Test
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Maven@3
+            displayName: 'Maven Build with Tests'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean install'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              codeCoverageToolOption: JaCoCo
+              codeCoverageJacocoReportDirectory: '$(Agent.BuildDirectory)/jacoco'
+              codeCoverageJacocoReportFile: 'jacoco.xml'
+              codeCoverageJacocoClassfilesDirectories: '$(Agent.BuildDirectory)/classes'
 
-checkout:
-  stage: checkout
-  image: alpine/git:latest
-  script:
-    - echo "Checking out the source code..."
-    - git clone --depth 1 $CI_REPOSITORY_URL .
-    - echo "Checkout complete."
-  artifacts:
-    paths:
-      - .
+          - task: CopyFiles@2
+            displayName: 'Copy Artifacts'
+            inputs:
+              SourceFolder: '$(System.DefaultWorkingDirectory)'
+              Contents: 'target/*.jar' # Adjust as needed based on your artifact name
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
 
-build:
-  stage: build
-  image: maven:3.8.6-jdk-11
-  script:
-    - echo "Building the application with Maven..."
-    - mvn clean install -DskipTests # Skip tests during the build phase
-    - echo "Build complete."
-  artifacts:
-    paths:
-      - target/*.jar # Store the built JAR file
-  dependencies:
-    - checkout
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Artifacts'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
 
-test:
-  stage: test
-  image: maven:3.8.6-jdk-11
-  script:
-    - echo "Running unit tests with Maven..."
-    - mvn test
-    - echo "Test complete."
-  dependencies:
-    - build
+  - stage: SonarQubeAnalysis
+    displayName: SonarQube Analysis
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: Analyze
+        displayName: SonarQube Analysis
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: SonarSource.sonarqube.15B84CA1-B62F-4A2A-A403-89B51890F4D4.SonarQubePrepare@5
+            displayName: 'Prepare analysis on SonarQube'
+            inputs:
+              SonarQube: 'your_sonarqube_connection' # Replace with your SonarQube connection name
+              scannerMode: 'Maven'
+              projectKey: 'your_project_key'        # Replace with your SonarQube project key
+              projectName: 'your_project_name'      # Replace with your SonarQube project name
 
-deploy:
-  stage: deploy
-  image: alpine/git:latest # Or any image with deployment tools
-  script:
-    - echo "Deploying the application..."
-    - echo "Deploy command placeholder. Replace with your actual deployment command."
-    # Example:
-    # - ssh user@server "java -jar /path/to/your/application.jar"
-    - echo "Deployment complete."
-  dependencies:
-    - test
-  only:
-    - main # Deploy only from the main branch.  Adjust as needed
-  when: manual #Require manual trigger for the deploy stage
+          - task: Maven@3
+            displayName: 'Run SonarQube analysis'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'org.sonarsource.scanner.maven:sonar-maven-plugin:sonar'
 
+          - task: SonarSource.sonarqube.6D06A19F-89E3-4917-B6E1-F06D14CA18D4.SonarQubePublish@5
+            displayName: 'Publish Quality Gate Result'
+            inputs:
+              pollingTimeoutSec: '300'
+
+  - stage: Deploy
+    displayName: Deploy to Environment
+    dependsOn: SonarQubeAnalysis # Ensure SonarQube analysis is complete and successful
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main')) # Deploy only from main branch and on successful build
+    jobs:
+      - deployment: DeployToAzure
+        displayName: Deploy to Azure App Service
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'YourAzureEnvironment' # Replace with your Azure environment name
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureWebApp@1
+                  displayName: 'Azure App Service Deploy'
+                  inputs:
+                    azureSubscription: 'your_azure_subscription' # Replace with your Azure subscription name
+                    appName: 'your_app_service_name'          # Replace with your Azure App Service name
+                    package: '$(Build.ArtifactStagingDirectory)/*.jar' # Deploy the JAR file
 ```
