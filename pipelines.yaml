@@ -1,95 +1,111 @@
 ```yaml
 # tech_stack_detector.py
-# CI/CD pipeline for a React application
-
 name: React CI/CD Pipeline
 
 on:
   push:
     branches:
-      - main  # Trigger on pushes to the main branch
+      - main
   pull_request:
     branches:
-      - main  # Trigger on pull requests to the main branch
+      - main
 
 jobs:
-  # Job to lint and format the code
-  lint_and_format:
+  setup:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18' # or your preferred Node.js version
+          node-version: '18' # Use a supported Node.js version
 
       - name: Install dependencies
+        run: npm install # Or yarn install, depending on your project
+        
+  lint:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies (linting dependencies)
         run: npm install
 
-      - name: Lint with ESLint
-        run: npm run lint
+      - name: Run ESLint
+        run: npm run lint # Or yarn lint.  Ensure this script is defined in package.json
+  
+  format:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: Format with Prettier
-        run: npm run format
-  # Job to run unit tests
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies (formatting dependencies)
+        run: npm install
+
+      - name: Run Prettier
+        run: npm run format # Or yarn format. Ensure this script is defined in package.json
+        
   test:
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18' # or your preferred Node.js version
+          node-version: '18'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install # Or yarn install
 
       - name: Run tests
-        run: npm run test:ci # Assuming you have a test script named test:ci
+        run: npm test # Or yarn test.  Ensure this script is defined in package.json
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }} # Optional: If you use Codecov
-          flags: unit
-          fail_ci_if_error: true
-
-  # Job to build the application
   build:
+    needs: [lint, format, test] # Ensure linting, formatting, and tests pass before building
     runs-on: ubuntu-latest
-    needs: [lint_and_format, test] # Ensure linting, formatting, and testing pass before building
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18' # or your preferred Node.js version
+          node-version: '18'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install # Or yarn install
 
       - name: Build the application
-        run: npm run build
+        run: npm run build # Or yarn build. Ensure this script is defined in package.json
 
-      - name: Upload build artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
           name: build
-          path: build
-
-  # Job to deploy the application to production (example using Surge.sh)
+          path: build #  Adjust this to your build output directory.
+          
   deploy:
+    needs: build
     runs-on: ubuntu-latest
-    needs: build # Ensure the build job completes successfully
-    environment:
-      name: Production
-      url: ${{ steps.surge.outputs.surge_url }} # dynamic url from surge
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v3
@@ -97,11 +113,13 @@ jobs:
           name: build
           path: build
 
-      - name: Install Surge
-        run: npm install -g surge
-
-      - name: Deploy to Surge
-        id: surge
-        run: surge ./build ${{ secrets.SURGE_DOMAIN }} --token ${{ secrets.SURGE_TOKEN }}
-
+      - name: Deploy to a hosting environment (Example: Netlify)
+        if: github.ref == 'refs/heads/main' # Only deploy from main branch.
+        run: |
+          echo "Deploying to Netlify..."
+          # Replace with your deployment script.
+          # Example using Netlify CLI:
+          # npm install -g netlify-cli
+          # netlify deploy --prod --dir=build --auth-token=${{ secrets.NETLIFY_AUTH_TOKEN }} --site=${{ secrets.NETLIFY_SITE_ID }}
+          echo "Deployment steps go here."
 ```
