@@ -1,79 +1,64 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for building and deploying a Java application using Maven.
-# Includes steps for checkout, build, test, and deployment.
-# Uses best practices for caching dependencies and parallel execution.
-# Assumes a standard Maven project structure.
+# Pipeline configuration for Java (Maven) project
 
 stages:
-  - Checkout
-  - Build
-  - Test
-  - Package
-  - Deploy
+  - name: Build
+    steps:
+      - step:
+          name: Checkout Code
+          type: git-checkout
+          repo: self
+  
+      - step:
+          name: Setup JDK
+          image: maven:3.8.6-openjdk-17 # Using a specific Maven and JDK version for reproducibility
+          script:
+            - echo "Setting up JDK 17" # Explicitly state the JDK version
+            - java -version # Verify Java version
 
-variables:
-  MAVEN_CLI_OPTS: "-Dmaven.repo.local=.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn"
-  MAVEN_OPTS: "-Xms256m -Xmx512m"
+      - step:
+          name: Maven Build and Test
+          image: maven:3.8.6-openjdk-17
+          script:
+            - echo "Starting Maven build"
+            - mvn clean install -DskipTests # Build and skip tests initially to check compilation
+            - echo "Maven build completed"
+  
+  - name: Test
+    steps:
+      - step:
+          name: Run Tests
+          image: maven:3.8.6-openjdk-17
+          script:
+            - echo "Running tests"
+            - mvn test # Run unit tests
+            - echo "Tests completed"
+          after_script:
+            - echo "Checking test results"
 
-cache:
-  paths:
-    - .m2/repository/
-    - target/
+  - name: SonarQube Analysis
+    steps:
+      - step:
+          name: SonarQube Scan
+          image: maven:3.8.6-openjdk-17
+          script:
+            - echo "Starting SonarQube analysis"
+            - mvn sonar:sonar -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN # Using environment variables for SonarQube configuration
+            - echo "SonarQube analysis completed"
+          after_script:
+            - echo "Check SonarQube for quality gate status"
+          services:
+            - sonarqube  # Declare the SonarQube service
 
-checkout:
-  stage: Checkout
-  image: alpine/git:latest
-  script:
-    - echo "Checking out the code..."
-    - git clone --depth 1 --single-branch --branch $CI_COMMIT_REF_NAME $CI_REPOSITORY_URL .
-  artifacts:
-    paths:
-      - .git/
+services:
+  sonarqube:
+    image: sonarqube:lts #Using a stable LTS version of SonarQube
+    ports:
+      - "9000:9000"
+    environment:
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true  # Disable bootstrap checks for easier startup during CI
 
-build:
-  stage: Build
-  image: maven:3.8.6-jdk-11
-  script:
-    - echo "Building the application..."
-    - mvn $MAVEN_CLI_OPTS compile
-
-test:
-  stage: Test
-  image: maven:3.8.6-jdk-11
-  script:
-    - echo "Running tests..."
-    - mvn $MAVEN_CLI_OPTS test
-
-package:
-  stage: Package
-  image: maven:3.8.6-jdk-11
-  script:
-    - echo "Packaging the application..."
-    - mvn $MAVEN_CLI_OPTS package -DskipTests
-  artifacts:
-    paths:
-      - target/*.jar
-    expire_in: 1 week
-
-deploy:
-  stage: Deploy
-  image: alpine/helm:3.10.3 # Example using Helm
-  before_script:
-    - echo "Setting up deployment environment..."
-    - apk add --update --no-cache openssh-client # Add SSH client if needed for deployment
-    - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa #Use secret variable SSH_PRIVATE_KEY
-    - chmod 400 ~/.ssh/id_rsa
-    - ssh-keyscan $DEPLOYMENT_HOST >> ~/.ssh/known_hosts #Use secret variable DEPLOYMENT_HOST
-    - helm version
-  script:
-    - echo "Deploying the application..."
-    - helm upgrade --install my-app target/*.jar --set image.tag=$CI_COMMIT_SHA #Example deployment
-  environment:
-    name: production
-    url: $DEPLOYMENT_URL #Use secret variable DEPLOYMENT_URL
-  only:
-    - main
-  when: manual
+options:
+  docker: true #Enables Docker support in the pipeline
 ```
