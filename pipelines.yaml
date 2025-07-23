@@ -1,14 +1,11 @@
 ```yaml
 # tech_stack_detector.py
-# CI/CD pipeline for a React application.
-# Uses Node.js for building and testing, and deploys to a cloud environment (example: AWS S3).
-
-name: React CI/CD Pipeline
+name: React App CI/CD Pipeline
 
 on:
   push:
     branches:
-      - main  # Trigger on pushes to the main branch
+      - main
   pull_request:
     branches:
       - main
@@ -19,66 +16,60 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v3
         with:
-          node-version: '18.x' # Use a specific Node.js version
+          node-version: '18'  # Use a supported Node.js version
 
       - name: Install dependencies
-        run: npm ci # Use npm ci for clean installs
+        run: npm install # Or yarn install if using Yarn
 
       - name: Run linters
         run: |
-          npm run lint
-          npm run format:check
+          npm run lint # Or yarn lint
 
       - name: Run tests
-        run: npm test -- --coverage
+        run: npm run test -- --coverage # Or yarn test.  Include coverage.
 
-      - name: Build application
-        run: npm run build
+      - name: Build production assets
+        run: npm run build # Or yarn build
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - name: Analyze code quality (SonarCloud)
+        uses: sonarsource/sonarcloud-github-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to trigger analysis
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # Insert your SonarCloud token
         with:
-          flags: unittests
-          name: codecov-react
-          fail_ci_if_error: true
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: build-artifacts
-          path: build # Upload the 'build' directory
+          args: >
+            -Dsonar.organization=your-sonarcloud-org # Replace with your SonarCloud organization key
+            -Dsonar.projectKey=your-sonarcloud-project # Replace with your SonarCloud project key
 
   deploy:
-    needs: build
+    needs: build  # Ensure build job completes successfully first
     runs-on: ubuntu-latest
     environment:
-      name: Production  # Define the environment
+      name: Production  # Define environment
 
     steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: build-artifacts
-          path: build
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1 # Replace with your AWS region
+          aws-region: us-east-1  # Replace with your AWS region
 
-      - name: Deploy to S3
+      - name: Install AWS CLI
         run: |
-          aws s3 sync build s3://your-s3-bucket --delete # Replace with your S3 bucket
+          sudo apt-get update
+          sudo apt-get install awscli -y
 
-      - name: Invalidate CloudFront cache (Optional)
+      - name: Deploy to S3 bucket
         run: |
-          aws cloudfront create-invalidation --distribution-id your-cloudfront-distribution-id --paths "/*" # Replace with your CloudFront distribution ID
-
+          aws s3 sync ./build s3://your-s3-bucket --delete # Replace with your S3 bucket name
+          aws cloudfront create-invalidation --distribution-id your-cloudfront-distribution-id --paths "/*"  # Optional: invalidate CloudFront cache. Replace with your CloudFront distribution ID.
 ```
