@@ -1,102 +1,74 @@
 ```yaml
 # tech_stack_detector.py
-# Pipeline for building, testing, and deploying a Java application using Maven.
-# Includes stages for static analysis, unit testing, integration testing, and deployment.
-# Uses industry best practices for security and code quality.
+# Pipeline for a Java project using Maven for build automation.
+# Includes stages for build, test, static analysis, and deployment.
+# Assumes Maven `pom.xml` is in the root of the repository.
 
 stages:
-  - name: "Build"
-    steps:
-      - run: |
-          echo "Building the application..."
-          mvn clean install -DskipTests
-        name: "Maven Build"
-        image: maven:3.8.6-jdk-11
+  - Build
+  - Test
+  - Static Analysis
+  - Deploy
 
-  - name: "Static Analysis"
-    steps:
-      - run: |
-          echo "Running static analysis with SonarQube..."
-          mvn sonar:sonar \
-            -Dsonar.host.url=$SONARQUBE_URL \
-            -Dsonar.login=$SONARQUBE_TOKEN
-        name: "SonarQube Analysis"
-        image: maven:3.8.6-jdk-11
-        environment:
-          SONARQUBE_URL:  # Define in project or org settings.  e.g., http://sonarqube.example.com
-          SONARQUBE_TOKEN: # Define in project or org settings.  e.g., sqp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-        failure: continue  # Allow pipeline to continue even if SonarQube analysis fails. Critical security issues can still fail the pipeline via quality gate.
+variables:
+  MAVEN_IMAGE: maven:3.8.6-jdk-11
 
-  - name: "Unit Tests"
-    steps:
-      - run: |
-          echo "Running unit tests..."
-          mvn test
-        name: "Maven Unit Tests"
-        image: maven:3.8.6-jdk-11
-        failure: fail
+build:
+  stage: Build
+  image: $MAVEN_IMAGE
+  script:
+    - echo "Starting Maven build..."
+    - mvn clean install -DskipTests # Skip tests during initial build phase. Can be removed to run tests during build.
+  artifacts:
+    paths:
+      - target/*.jar # Assuming the output is a JAR file; adjust if different.
+    expire_in: 1 day
 
-  - name: "Integration Tests"
-    steps:
-      - run: |
-          echo "Running integration tests..."
-          # Placeholder for integration test execution.  Adapt as needed.
-          mvn verify -P integration-test
-        name: "Maven Integration Tests"
-        image: maven:3.8.6-jdk-11
-        failure: fail
-        # Add environment variables and service dependencies for integration tests as needed
-        # e.g.,
-        # environment:
-        #   DATABASE_URL: "jdbc:postgresql://db:5432/mydb"
-        # services:
-        #   - name: db
-        #     image: postgres:13
-        #     ports:
-        #       - "5432:5432"
-        #     environment:
-        #       POSTGRES_USER: "myuser"
-        #       POSTGRES_PASSWORD: "mypassword"
-        #       POSTGRES_DB: "mydb"
+test:
+  stage: Test
+  image: $MAVEN_IMAGE
+  script:
+    - echo "Running Maven tests..."
+    - mvn test # Execute tests.  If tests were already executed during the build stage, this could be adjusted (e.g., using `mvn verify`).
+  dependencies:
+    - build
+  coverage: '/Total.*?([0-9]{1,3})%/'
+  artifacts:
+    reports:
+      junit: target/surefire-reports/TEST-*.xml # Location of JUnit test reports. Adjust as needed.
+    expire_in: 1 day
 
-  - name: "Package"
-    steps:
-      - run: |
-          echo "Packaging the application..."
-          mvn package
-        name: "Maven Package"
-        image: maven:3.8.6-jdk-11
+static_analysis:
+  stage: Static Analysis
+  image: $MAVEN_IMAGE
+  script:
+    - echo "Performing static analysis with SpotBugs..."
+    - mvn spotbugs:check # Runs SpotBugs static analysis. Requires SpotBugs plugin configured in pom.xml
+    - echo "Performing static analysis with PMD..."
+    - mvn pmd:check      # Runs PMD static analysis.     Requires PMD plugin configured in pom.xml
+  dependencies:
+    - build #Depends on build stage because the code should have been compiled first
+  allow_failure: true # Allow the pipeline to continue even if static analysis fails.
 
-      - run: |
-          echo "Dockerizing the application..."
-          docker build -t $DOCKER_IMAGE_NAME .
-          docker push $DOCKER_IMAGE_NAME
-        name: "Docker Build and Push"
-        image: docker:20.10.12
-        environment:
-          DOCKER_IMAGE_NAME: # Define in project or org settings.  e.g., your-docker-hub-username/your-app-name:latest
-        volumes:
-          - /var/run/docker.sock:/var/run/docker.sock # Needs Docker-in-Docker setup or a remote Docker daemon
-
-  - name: "Deploy"
-    steps:
-      - run: |
-          echo "Deploying the application..."
-          # Replace with your deployment script or tool (e.g., kubectl, helm, docker-compose)
-          # Example using kubectl:
-          # kubectl apply -f deployment.yaml
-          echo "Deployment placeholder - replace with actual deployment steps"
-        name: "Deploy to Environment"
-        image: alpine/kubectl:1.23.4 # example image with kubectl
-        environment:
-          KUBE_CONFIG: # Define in project or org settings or fetch from secret store.  e.g., base64 encoded kubeconfig
-        # Add environment variables for deployment environment as needed.
-        # Add necessary volumes to interact with your cluster e.g. mounted kubeconfig
-        # volumes:
-        #  - name: kubeconfig
-        #    mountPath: /root/.kube/config
-        #    secret: kubeconfig-secret
-    when:
-      branch: main # Only deploy from the main branch (or your desired production branch).  Consider adding tags as well.
-
+deploy:
+  stage: Deploy
+  image: docker:latest
+  before_script:
+    - apk add --no-cache curl # Install curl inside the docker image used by the runner
+  script:
+    - echo "Deploying application..."
+    - echo "Deployment logic goes here.  Example: Deploying a Docker image"
+    - echo "Consider using environment variables for sensitive information (e.g., deployment keys)."
+    # Example Docker login and push (replace with your actual deployment logic)
+    # - docker login -u "$DOCKER_REGISTRY_USER" -p "$DOCKER_REGISTRY_PASSWORD" "$DOCKER_REGISTRY_URL"
+    # - docker build -t "$DOCKER_REGISTRY_URL/$IMAGE_NAME:$CI_COMMIT_SHA" .
+    # - docker push "$DOCKER_REGISTRY_URL/$IMAGE_NAME:$CI_COMMIT_SHA"
+  dependencies:
+    - build
+  environment:
+    name: production
+    url: https://example.com # Replace with your actual application URL
+  only:
+    - main # Deploy only from the main branch
+  when: manual #Require a manual start to be deployed
 ```
