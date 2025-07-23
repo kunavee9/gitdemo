@@ -1,64 +1,63 @@
 ```yaml
 # tech_stack_detector.py
 # Pipeline for building and deploying a Java application using Maven.
+# Includes stages for checkout, build, test, and deployment.
 
 stages:
-  - name: Build
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+  - checkout
+  - build
+  - test
+  - deploy
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
+checkout:
+  stage: checkout
+  image: alpine/git:latest
+  script:
+    - echo "Checking out the code..."
+    - git clone $CI_REPOSITORY_URL .
+    - echo "Checkout complete."
 
-      - name: Maven Package
-        run: mvn -B package --file pom.xml
+build:
+  stage: build
+  image: maven:3.8.6-openjdk-17
+  script:
+    - echo "Building the application..."
+    - mvn clean install -DskipTests
+    - echo "Build complete."
+  artifacts:
+    paths:
+      - target/*.jar
+    expire_in: 1 week
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: target
-          path: target/*.jar
+test:
+  stage: test
+  image: maven:3.8.6-openjdk-17
+  script:
+    - echo "Running tests..."
+    - mvn test
+    - echo "Tests complete."
+  dependencies:
+    - build
 
-  - name: Test
-    needs: Build
-    steps:
-      - name: Download Artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: target
-          path: target
+deploy:
+  stage: deploy
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - echo "Logging in to Docker Hub..."
+    - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+  script:
+    - echo "Building Docker image..."
+    - docker build -t $DOCKER_IMAGE_NAME .
+    - echo "Pushing Docker image..."
+    - docker push $DOCKER_IMAGE_NAME
+    - echo "Deployment complete."
+  dependencies:
+    - build
+  only:
+    - main # or your main branch name
+  variables:
+    DOCKER_IMAGE_NAME: $DOCKER_USERNAME/$CI_PROJECT_NAME:$CI_COMMIT_SHA
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
-
-      - name: Maven Verify
-        run: mvn -B verify --file pom.xml
-
-  - name: Deploy
-    needs: Test
-    environment:
-      name: Production
-      url: your_deployment_url # Replace with your actual deployment URL
-    steps:
-      - name: Download Artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: target
-          path: target
-
-      - name: Deploy to Production # Replace with your deployment script
-        run: |
-          echo "Deploying to Production..."
-          # Add your deployment commands here. For example:
-          # scp target/*.jar user@your_server:/path/to/deployment/directory/
-          # ssh user@your_server "sudo systemctl restart your_service"
 ```
