@@ -1,23 +1,20 @@
 ```groovy
 pipeline {
-    agent { 
-        node('docker') // Assuming you have a 'docker' label on a Jenkins node with Docker installed
+    agent {
+        docker {
+            image 'node:16-alpine' // Or any other suitable Node.js image
+            label 'react-build-agent' // Optional: Use a label to target specific build agents
+        }
     }
 
     environment {
-        NPM_CONFIG_CACHE = '.npm' // Optimize npm caching
-        IMAGE_NAME = 'my-javascript-app' // Replace with your desired image name
-        DOCKERHUB_USERNAME = credentials('dockerhub-username') // Replace 'dockerhub-username' with your Jenkins credential ID for Docker Hub username
-        DOCKERHUB_PASSWORD = credentials('dockerhub-password') // Replace 'dockerhub-password' with your Jenkins credential ID for Docker Hub password
+        NPM_CONFIG_CACHE = "$HOME/.npm" // Cache npm dependencies
+        CI = 'true' // Indicate CI environment for specific libraries to behave accordingly (e.g., skip interactive prompts).
     }
 
     options {
-        timestamps()
-        disableConcurrentBuilds()
-    }
-
-    triggers {
-        pollSCM('H/5 * * * *') // Poll SCM every 5 minutes.  Adjust as needed.  Consider using webhooks for better performance.
+        timestamps() // Add timestamps to console output
+        disableConcurrentBuilds() // Prevent concurrent builds (if needed)
     }
 
 
@@ -25,114 +22,102 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                git url: 'your-git-repo-url', branch: 'main' // Replace with your Git repository URL and branch
+                git credentialsId: 'YOUR_GIT_CREDENTIALS_ID', url: 'YOUR_GIT_REPOSITORY_URL', branch: 'main' // Replace with your credentials and repository
             }
         }
 
-        stage('Dependencies') {
+        stage('Install Dependencies') {
             steps {
-                script {
-                    // Attempt to restore from cache first
-                    try {
-                        stash name: 'node_modules', includes: 'node_modules/**/*'
-                        unstash 'node_modules'
-                        echo 'Restored node_modules from stash.'
-                    } catch (hudson.AbortException e) {
-                        echo 'node_modules stash not found. Installing dependencies.'
-                        sh 'npm install'
-                        stash name: 'node_modules', includes: 'node_modules/**/*'  //Save dependencies for future builds
-                    }
-
-                }
+                sh 'npm install' // Install all project dependencies
             }
         }
 
-
-        stage('Tests') {
+        stage('Lint') {
             steps {
-                sh 'npm test -- --coverage' // Run tests with coverage
-                junit 'coverage/lcov-report/junit.xml' // Assuming you have a JUnit reporter configured for your tests
-                //Example of publishing coverage
-                //publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'coverage/lcov-report', reportFiles: 'index.html', reportName: 'Coverage Report'])
+                sh 'npm run lint' // Run linter (e.g., ESLint, Prettier)
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh 'npm test -- --watchAll=false --coverage' // Run tests with coverage (adjust command as needed)
+
+                // Optionally publish test results and code coverage
+                junit 'reports/junit.xml' // Replace with your JUnit report path
+                publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'coverage', reportName: 'Code Coverage Report', reportTitles: '']) // Replace with your coverage report path
             }
         }
 
         stage('Build') {
             steps {
-                sh 'npm run build' // Run your build command.  Adjust as necessary.
+                sh 'npm run build' // Build the React application
             }
-        }
-
-        stage('Docker Build and Push') {
-            steps {
-                script {
-                    // Login to Docker Hub
-                    sh "docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD} docker.io"
-
-                    // Build the Docker image
-                    sh "docker build -t ${IMAGE_NAME}:latest ."
-
-                    // Tag the image with the version from package.json (or use a different versioning strategy)
-                    VERSION = sh(returnStdout: true, script: 'npm version patch').trim() // Bump the patch version
-                    sh "docker tag ${IMAGE_NAME}:latest ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${VERSION}"
-
-                    // Push the images to Docker Hub
-                    sh "docker push ${IMAGE_NAME}:latest"
-                    sh "docker push ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${VERSION}"
-
-                    // Update latest tag to point to the new version
-                    sh "docker tag ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${VERSION} ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
-                    sh "docker push ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
-
+            post {
+                success {
+                    archiveArtifacts artifacts: 'build/**' // Archive the build output
+                }
+                failure {
+                    echo 'Build failed.  Check the console output for errors.'
                 }
             }
         }
 
-        stage('Deploy to Staging') {
+        stage('Push to Artifact Repository') {
             when {
-                branch 'main' // Deploy only from main branch.  Change as appropriate
-            }
-            steps {
-               script {
-                  // Example Deployment using docker compose:
-                  // sh "ssh user@staging-server 'docker-compose -f /path/to/docker-compose.yml pull && docker-compose -f /path/to/docker-compose.yml up -d'"
-
-                  // Example using kubectl:
-                  // sh "kubectl apply -f deployment.yaml"
-
-                   echo "Placeholder: Deploying to staging environment using image: ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
-                   echo "Replace this with your actual deployment steps (e.g., using Docker Compose, Kubernetes, etc.)"
-               }
-            }
-        }
-
-        stage('Deploy to Production') {
-            when {
-                manual 'Approve Production Deployment'
+                branch 'main' // Only push from the main branch, adjust as needed
             }
             steps {
                 script {
-                  // Example Deployment using docker compose:
-                  // sh "ssh user@prod-server 'docker-compose -f /path/to/docker-compose.yml pull && docker-compose -f /path/to/docker-compose.yml up -d'"
-                  // Example using kubectl:
-                  // sh "kubectl apply -f deployment.yaml"
+                   //Example with JFrog Artifactory
+                   def server = Artifactory.server 'YOUR_ARTIFACTORY_SERVER_ID'
+                   server.upload(
+                       spec: """{
+                           "files": [
+                               {
+                                   "pattern": "build/**",
+                                   "target": "your-artifactory-repo/your-react-app/${env.BUILD_NUMBER}"
+                               }
+                           ]
+                       }"""
+                   )
 
-                   echo "Placeholder: Deploying to production environment using image: ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
-                   echo "Replace this with your actual deployment steps (e.g., using Docker Compose, Kubernetes, etc.)"
-               }
+                   // OR Example with AWS S3
+                   //sh 'aws s3 sync build/ s3://your-s3-bucket/your-react-app/$BUILD_NUMBER/'
+
+                   // OR Example with Nexus
+                    //nexusPublisher nexusInstanceId: 'YOUR_NEXUS_INSTANCE_ID',
+                    //    nexusRepository: 'your-nexus-repository',
+                    //    packageGroup: 'your.group.id',
+                    //    packageArtifactId: 'your-react-app',
+                    //    packageVersion: env.BUILD_NUMBER,
+                    //    pathToDirectory: 'build'
+                }
+
+            }
+        }
+
+        stage('Deploy') {
+            when {
+                branch 'main'  // Deploy only from the main branch
+            }
+            steps {
+                script {
+                    // Example deployment to AWS S3 using AWS CLI
+                    sh 'aws s3 sync build/ s3://your-production-bucket/your-react-app/ --delete'
+
+                    // Example deployment to Netlify using Netlify CLI
+                    //sh 'netlify deploy --prod --dir=build --message "Deployment from Jenkins build $BUILD_NUMBER"'
+
+                    // Example deployment to a web server using SSH
+                    //sshPublisher(publishers: [sshPublisherDesc(configName: 'YOUR_SSH_SERVER_CONFIG', transfers: [sshTransfer(cleanRemote: false, excludes: '', execCommand: 'sudo systemctl restart your-web-server', flatten: false, makeEmptyDirs: false, noDefaultExcludes: false, patternSeparator: '[, ]+', remoteDirectory: '/var/www/your-react-app', remoteDirectorySDF: false, removePrefix: 'build', sourceFiles: 'build/**')])])
+                }
             }
         }
     }
 
     post {
         always {
-            cleanWs()
-        }
-        success {
-            echo 'Pipeline completed successfully!'
-        }
-        failure {
-            echo 'Pipeline failed!'
+            cleanWs() // Clean the workspace after the build
         }
     }
 }
