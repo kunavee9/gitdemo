@@ -1,0 +1,139 @@
+```groovy
+pipeline {
+    agent { 
+        node('docker') // Assuming you have a 'docker' label on a Jenkins node with Docker installed
+    }
+
+    environment {
+        NPM_CONFIG_CACHE = '.npm' // Optimize npm caching
+        IMAGE_NAME = 'my-javascript-app' // Replace with your desired image name
+        DOCKERHUB_USERNAME = credentials('dockerhub-username') // Replace 'dockerhub-username' with your Jenkins credential ID for Docker Hub username
+        DOCKERHUB_PASSWORD = credentials('dockerhub-password') // Replace 'dockerhub-password' with your Jenkins credential ID for Docker Hub password
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    triggers {
+        pollSCM('H/5 * * * *') // Poll SCM every 5 minutes.  Adjust as needed.  Consider using webhooks for better performance.
+    }
+
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                git url: 'your-git-repo-url', branch: 'main' // Replace with your Git repository URL and branch
+            }
+        }
+
+        stage('Dependencies') {
+            steps {
+                script {
+                    // Attempt to restore from cache first
+                    try {
+                        stash name: 'node_modules', includes: 'node_modules/**/*'
+                        unstash 'node_modules'
+                        echo 'Restored node_modules from stash.'
+                    } catch (hudson.AbortException e) {
+                        echo 'node_modules stash not found. Installing dependencies.'
+                        sh 'npm install'
+                        stash name: 'node_modules', includes: 'node_modules/**/*'  //Save dependencies for future builds
+                    }
+
+                }
+            }
+        }
+
+
+        stage('Tests') {
+            steps {
+                sh 'npm test -- --coverage' // Run tests with coverage
+                junit 'coverage/lcov-report/junit.xml' // Assuming you have a JUnit reporter configured for your tests
+                //Example of publishing coverage
+                //publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'coverage/lcov-report', reportFiles: 'index.html', reportName: 'Coverage Report'])
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'npm run build' // Run your build command.  Adjust as necessary.
+            }
+        }
+
+        stage('Docker Build and Push') {
+            steps {
+                script {
+                    // Login to Docker Hub
+                    sh "docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD} docker.io"
+
+                    // Build the Docker image
+                    sh "docker build -t ${IMAGE_NAME}:latest ."
+
+                    // Tag the image with the version from package.json (or use a different versioning strategy)
+                    VERSION = sh(returnStdout: true, script: 'npm version patch').trim() // Bump the patch version
+                    sh "docker tag ${IMAGE_NAME}:latest ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${VERSION}"
+
+                    // Push the images to Docker Hub
+                    sh "docker push ${IMAGE_NAME}:latest"
+                    sh "docker push ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${VERSION}"
+
+                    // Update latest tag to point to the new version
+                    sh "docker tag ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${VERSION} ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
+                    sh "docker push ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
+
+                }
+            }
+        }
+
+        stage('Deploy to Staging') {
+            when {
+                branch 'main' // Deploy only from main branch.  Change as appropriate
+            }
+            steps {
+               script {
+                  // Example Deployment using docker compose:
+                  // sh "ssh user@staging-server 'docker-compose -f /path/to/docker-compose.yml pull && docker-compose -f /path/to/docker-compose.yml up -d'"
+
+                  // Example using kubectl:
+                  // sh "kubectl apply -f deployment.yaml"
+
+                   echo "Placeholder: Deploying to staging environment using image: ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
+                   echo "Replace this with your actual deployment steps (e.g., using Docker Compose, Kubernetes, etc.)"
+               }
+            }
+        }
+
+        stage('Deploy to Production') {
+            when {
+                manual 'Approve Production Deployment'
+            }
+            steps {
+                script {
+                  // Example Deployment using docker compose:
+                  // sh "ssh user@prod-server 'docker-compose -f /path/to/docker-compose.yml pull && docker-compose -f /path/to/docker-compose.yml up -d'"
+                  // Example using kubectl:
+                  // sh "kubectl apply -f deployment.yaml"
+
+                   echo "Placeholder: Deploying to production environment using image: ${DOCKERHUB_USERNAME}/${IMAGE_NAME}:latest"
+                   echo "Replace this with your actual deployment steps (e.g., using Docker Compose, Kubernetes, etc.)"
+               }
+            }
+        }
+    }
+
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed!'
+        }
+    }
+}
+```
