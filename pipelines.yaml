@@ -1,0 +1,112 @@
+```groovy
+pipeline {
+    agent {
+        docker {
+            image 'maven:3.8.6-jdk-11'  // Using a standard Maven image with JDK 11
+        }
+    }
+    options {
+        disableConcurrentBuilds()  // Prevents concurrent builds on the same branch
+        timestamps()               // Add timestamps to console output
+    }
+    triggers {
+        pollSCM('H/5 * * * *')    // Polls the SCM every 5 minutes for changes
+    }
+    parameters {
+        string(name: 'ENVIRONMENT', defaultValue: 'dev', description: 'Target environment for deployment (dev, staging, prod)')
+        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'Docker image tag')
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                git url: 'https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY_NAME.git',
+                    branch: 'main',
+                    credentialsId: 'YOUR_GIT_CREDENTIALS_ID' //Replace with your git credentials ID
+            }
+        }
+
+        stage('Dependencies Check') {
+            steps {
+                sh 'mvn dependency:tree' //Verify dependencies are resolved correctly
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                sh 'mvn clean test'
+            }
+            post {
+                always {
+                    junit '**/target/surefire-reports/TEST-*.xml' // Report JUnit test results
+                }
+            }
+        }
+
+        stage('Code Quality Analysis') {
+          steps {
+            sh 'mvn checkstyle:checkstyle' // Example using checkstyle
+          }
+          post {
+            failure {
+              echo "Code quality checks failed.  Review the logs for details."
+            }
+          }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'mvn clean package -DskipTests' // Package the application, skipping tests as they ran in a previous stage
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                script {
+                    def appName = 'your-app-name' // Replace with your app name
+                    def dockerImage = "${appName}:${IMAGE_TAG}"
+                    sh "docker build -t ${dockerImage} ."
+                    env.DOCKER_IMAGE = dockerImage  // Store the image name in an environment variable
+                }
+            }
+        }
+
+        stage('Docker Push') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'YOUR_DOCKERHUB_CREDENTIALS_ID', passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) { //Replace with your dockerhub credentials ID
+                        sh "docker login -u ${env.DOCKER_USERNAME} -p ${env.DOCKER_PASSWORD}"
+                        sh "docker push ${env.DOCKER_IMAGE}"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            when {
+                expression {
+                    return params.ENVIRONMENT != 'skip'
+                }
+            }
+            steps {
+                script {
+                    def deployScript = "./deploy.sh"  //Replace with your deployment script
+                    sh "${deployScript} ${params.ENVIRONMENT} ${env.DOCKER_IMAGE}"
+                }
+            }
+        }
+    }
+    post {
+        always {
+            cleanWs()  // Cleanup workspace after the build, even if it fails
+        }
+        failure {
+            echo "Pipeline failed. Check the logs for details."
+            // Add notification logic (e.g., send email)
+        }
+        success {
+            echo "Pipeline completed successfully."
+            // Add notification logic (e.g., send email)
+        }
+    }
+}
+```
