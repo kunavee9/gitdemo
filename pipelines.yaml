@@ -1,0 +1,103 @@
+```groovy
+pipeline {
+    agent {
+        docker {
+            image 'maven:3.8.6-jdk-11'
+            label 'maven'
+            args '-v $HOME/.m2:/root/.m2'
+        }
+    }
+    options {
+        // Abort the build if it's been waiting too long.
+        timeout(time: 30, unit: 'MINUTES')
+        // Fail the build immediately if a stage fails.
+        buildDiscarder(logRotator(daysToKeepStr: '7', numToKeepStr: '10'))
+        // Prevent concurrent builds of the same job.
+        disableConcurrentBuilds()
+    }
+    environment {
+        // Define environment variables
+        JFROG_URL = "${env.JFROG_URL}"
+        JFROG_USER = "${env.JFROG_USER}"
+        JFROG_PASSWORD = "${env.JFROG_PASSWORD}"
+        MAVEN_OPTS = '-Dmaven.repo.local=$HOME/.m2'
+    }
+    triggers {
+        // Trigger the build on any push to the main branch.
+        // Adjust the branch name as needed.
+        gitHubPush()
+        cron('H/5 * * * *')
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                // Checkout the code from Git.
+                git credentialsId: "${env.GIT_CREDENTIALS_ID}", url: "${env.GIT_REPOSITORY_URL}", branch: 'main'
+            }
+        }
+        stage('Dependencies Check') {
+            steps {
+                // Resolve project dependencies and check for vulnerabilities
+                sh "mvn ${MAVEN_OPTS} dependency:tree"
+            }
+        }
+        stage('Unit Tests') {
+            steps {
+                // Execute unit tests and generate coverage reports.
+                sh "mvn ${MAVEN_OPTS} clean test"
+                junit 'target/surefire-reports/*.xml'
+            }
+            post {
+                always {
+                    // Archive test results
+                    archiveArtifacts 'target/surefire-reports/*.xml'
+                }
+            }
+        }
+        stage('Build') {
+            steps {
+                // Package the application into a deployable artifact.
+                sh "mvn ${MAVEN_OPTS} clean package -DskipTests=true"
+            }
+            post {
+                always {
+                    // Archive the packaged artifact.
+                    archiveArtifacts 'target/*.jar'
+                }
+            }
+        }
+        stage('Push to JFrog Artifactory') {
+            steps {
+                // Push the artifact to JFrog Artifactory.
+                script {
+                    def serverUrl = "${JFROG_URL}"
+                    def artifactoryUser = "${JFROG_USER}"
+                    def artifactoryPassword = "${JFROG_PASSWORD}"
+                    def repository = "libs-release-local" // Replace with your Artifactory repository
+
+                    sh "mvn ${MAVEN_OPTS} deploy -DaltDeploymentRepository=artifactory::default::$serverUrl/artifactory/${repository} -DrepositoryId=artifactory -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true -Dmaven.wagon.http.ssl.hostnameVerifier=noop"
+                }
+            }
+        }
+    }
+    post {
+        // Always run, regardless of the build result.
+        always {
+            // Clean the workspace to save disk space.
+            cleanWs()
+        }
+        // If the build failed, send a notification.
+        failure {
+            echo 'Build failed. Sending notification...'
+            // Replace with your notification logic (e.g., email, Slack).
+            // mail to: 'devops@example.com', subject: 'Build Failed', body: 'The build failed. Check the logs for details.'
+        }
+        // If the build succeeded, send a notification.
+        success {
+            echo 'Build succeeded. Sending notification...'
+            // Replace with your notification logic.
+            // mail to: 'devops@example.com', subject: 'Build Succeeded', body: 'The build succeeded.'
+        }
+    }
+}
+```
