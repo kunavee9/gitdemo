@@ -2,98 +2,106 @@
 pipeline {
     agent {
         docker {
-            image 'node:18-alpine'
-            args '-u root:root'
+            image 'node:18-alpine'  // Using a node image suitable for React development
+            label 'react-builder'      // Optional: Use a label to target specific build agents
+            args '-u root:root'       // Ensures proper permissions within the container
         }
     }
     options {
-        skipStagesAfterUnstable()
-        disableConcurrentBuilds()
-        timeout(time: 30, unit: 'MINUTES')
-        buildDiscarder(logRotator(daysToKeepStr: '7', numToKeepStr: '10'))
+        timeout(time: 60, unit: 'MINUTES') // Global timeout
+        //disableConcurrentBuilds()  // Uncomment if you need to prevent concurrent builds
+        buildDiscarder(logRotator(daysToKeep: 7, numToKeep: 10))
+        timestamps()
     }
-    triggers {
-        pollSCM('H/5 * * * *')
+    environment {
+        NPM_CONFIG_CACHE = "$HOME/.npm" // Cache npm dependencies
+        CI = 'true'                 // Ensure CI environment variables are set
+        REACT_APP_API_URL = "${env.REACT_APP_API_URL}" //React app env variable
+        JFROG_URL = "${env.JFROG_URL}"
+        JFROG_USERNAME = "${env.JFROG_USERNAME}"
+        JFROG_PASSWORD = "${env.JFROG_PASSWORD}"
+        ARTIFACTORY_REPO = "${env.ARTIFACTORY_REPO}" // Artifact repository name
+        NPM_TOKEN = "${env.NPM_TOKEN}"
     }
     parameters {
-        string(name: 'RELEASE_VERSION', defaultValue: '1.0.0-SNAPSHOT', description: 'Release version to be used for the build')
-        booleanParam(name: 'DEPLOY_TO_PROD', defaultValue: false, description: 'Deploy to production environment after successful build?')
+        string(name: 'BRANCH_NAME', defaultValue: 'main', description: 'Branch to build')
+        string(name: 'BUILD_VERSION', defaultValue: '1.0.0', description: 'Build Version')
     }
+
     stages {
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/YOUR_GITHUB_USERNAME/YOUR_JAVASCRIPT_PROJECT.git', branch: 'main'
+                git branch: "${params.BRANCH_NAME}", url: "${env.GIT_REPO_URL}", credentialsId: "${env.GIT_CREDENTIALS_ID}"
+                script {
+                    env.BUILD_NUMBER = "${BUILD_NUMBER}"
+                    env.APP_VERSION = "${params.BUILD_VERSION}.${BUILD_NUMBER}"
+                }
             }
         }
+
         stage('Dependencies') {
             steps {
-                sh 'npm install'
+                sh 'npm config set //registry.npmjs.org/:_authToken $NPM_TOKEN'
+                sh 'npm ci --cache $NPM_CONFIG_CACHE --prefer-offline' // Install dependencies with caching
             }
         }
-        stage('Lint') {
+
+        stage('Tests') {
             steps {
-                sh 'npm run lint'
+                sh 'npm test -- --watchAll=false --coverage' // Run unit tests with coverage
+            }
+            post {
+                always {
+                    //Publish test report
+                    junit 'coverage/junit.xml'
+                    //Publish code coverage
+                    publishHTML(script: 'cat ./coverage/index.html', keepAll: true, reportDir: 'coverage', reportName: 'Code Coverage Report', reportTitles: '')
+                }
+                failure {
+                    echo 'Tests Failed!'
+                    // Optionally, send notifications here
+                }
             }
         }
-        stage('Test') {
-            steps {
-                sh 'npm test -- --coverage'
-                junit 'coverage/junit.xml'
-                publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: 'coverage', reportName: 'Coverage Report', reportTitles: ''])
-            }
-        }
-        stage('Security Scan') {
-            steps {
-                sh 'npm audit' // Basic npm audit; integrate with more robust tools like SonarQube or Snyk for real projects
-            }
-        }
+
         stage('Build') {
             steps {
-                sh 'npm run build'
-                archiveArtifacts artifacts: 'dist/**'
+                sh 'npm run build' // Build the React application
+                sh 'echo "Build Version: $APP_VERSION" > build/version.txt'
             }
         }
-        stage('Version') {
+
+        stage('Package') {
             steps {
                 script {
-                    env.VERSION = params.RELEASE_VERSION
+                    def appName = "my-react-app" // Define artifact name
+                    def artifactName = "${appName}-${env.APP_VERSION}.zip"
+                    sh "zip -r ${artifactName} build" // Create ZIP archive
+
+                    env.ARTIFACT_PATH = artifactName
+
                 }
-                sh "echo Building version: ${env.VERSION}"
             }
         }
-        stage('Publish') {
-            when {
-                branch 'main'
-            }
+
+        stage('Publish to Artifactory') {
             steps {
                 script {
-                   withCredentials([usernamePassword(credentialsId: 'NPM_CREDENTIALS', usernameVariable: 'NPM_USERNAME', passwordVariable: 'NPM_PASSWORD')]) {
-                        sh "echo //registry.npmjs.org/:_authToken=\${NPM_PASSWORD} > .npmrc"
-                        sh "npm config set access public"
-                        sh "npm publish"
+                    def serverUrl = "${env.JFROG_URL}"
+                    def artifactoryRepo = "${env.ARTIFACTORY_REPO}"
+                    def artifactPath = "${env.ARTIFACT_PATH}"
+                    def version = "${env.APP_VERSION}"
+                    def username = "${env.JFROG_USERNAME}"
+                    def password = "${env.JFROG_PASSWORD}"
+                    def appName = "my-react-app"
+
+                    withCredentials([usernamePassword(credentialsId: "${env.JFROG_CREDENTIALS_ID}", usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                        sh """
+                            curl -u "\$USERNAME:\$PASSWORD" -T ${artifactPath} ${serverUrl}/artifactory/${artifactoryRepo}/${appName}/${version}/${artifactPath}
+                        """
                     }
+
                 }
-            }
-        }
-        stage('Deploy to Staging') {
-             when {
-                branch 'main'
-            }
-            steps {
-                sh 'echo Deploying to Staging...'
-                // Add deployment steps for staging environment (e.g., deploy to a staging server, AWS, etc.)
-                sh 'echo Staging deployment completed!'
-            }
-        }
-        stage('Deploy to Production') {
-            when {
-                expression { params.DEPLOY_TO_PROD == true }
-            }
-            steps {
-                input message: 'Are you sure you want to deploy to production?', ok: 'Deploy!'
-                sh 'echo Deploying to Production...'
-                // Add deployment steps for production environment
-                sh 'echo Production deployment completed!'
             }
         }
     }
@@ -101,14 +109,9 @@ pipeline {
         always {
             cleanWs()
         }
-        success {
-            echo 'Pipeline completed successfully!'
-        }
         failure {
             echo 'Pipeline failed!'
-        }
-        unstable {
-            echo 'Pipeline unstable!'
+            // Optionally, send notifications here
         }
     }
 }
